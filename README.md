@@ -28,6 +28,13 @@ Key behaviors:
 - **Caddy reverse proxy**: stable public inference entrypoint that is flipped only after a candidate server is healthy.
 - **Docker socket proxy**: narrows the router's Docker access surface while still allowing container lifecycle automation.
 
+## Reference Backends
+
+- **`sklearn-model-1`**: a scikit-learn random forest regressor on the diabetes dataset.
+- **`pytorch-model-1`**: a small PyTorch MLP regressor on the same dataset, logged through `mlflow.pytorch` and served through the same rollout path.
+
+The two backends are intentionally similar so the main difference is the training framework rather than the deployment flow.
+
 ## End-to-End Flow
 
 1. A request hits `/admin/train/{trainer}` or `/admin/train_then_roll/{trainer}`.
@@ -56,6 +63,10 @@ The reference trainer in `model-images/sklearn-model-1/` demonstrates the main M
    ```bash
    docker compose -f model-images/sklearn-model-1/docker-compose.prod.yml build
    ```
+   To build the PyTorch reference backend instead:
+   ```bash
+   docker compose -f model-images/pytorch-model-1/docker-compose.prod.yml build
+   ```
 3. Launch the stack:
    ```bash
    docker compose -f docker-compose.prod.yaml up --build
@@ -66,6 +77,13 @@ The reference trainer in `model-images/sklearn-model-1/` demonstrates the main M
      'http://localhost:8000/admin/train_then_roll/sklearn-model-1' \
      -H 'Content-Type: application/json' \
      -d '{"wait_seconds": 600, "parameters": {"N_ESTIMATORS": 256}}'
+   ```
+   Or run the PyTorch backend:
+   ```bash
+   curl -X POST \
+     'http://localhost:8000/admin/train_then_roll/pytorch-model-1' \
+     -H 'Content-Type: application/json' \
+     -d '{"wait_seconds": 600, "parameters": {"EPOCHS": 300, "HIDDEN_DIM": 64}}'
    ```
 5. Query the stable inference endpoint after rollout completes:
    ```bash
@@ -160,7 +178,7 @@ model-images/
 
 ## Current Limitations
 
-- The reference implementation ships with one bundled model backend: scikit-learn.
+- The reference implementation ships with two bundled model backends: scikit-learn and PyTorch.
 - The default environment is local-only: local Docker, local MLflow, SQLite backend store, and file-based artifacts.
 - Rollback currently tracks only the immediately previous deployment, not a full deployment history.
 - Test coverage is still thin beyond the current happy-path smoke test.
@@ -169,7 +187,7 @@ model-images/
 ## Planned Extensions
 
 - Expand rollback from a single previous deployment into a richer deployment history.
-- Add a second reference backend, likely PyTorch, to demonstrate framework-agnostic specs more clearly.
+- Add a more complex second-stage backend, likely transformer-based, to extend the framework-agnostic story beyond tabular regression.
 - Expand smoke coverage and add targeted unit tests around trainer spec resolution and rollout state handling.
 - Support remote datasets and artifact stores such as S3-compatible storage.
 - Expand promotion policy options beyond direct production alias updates.

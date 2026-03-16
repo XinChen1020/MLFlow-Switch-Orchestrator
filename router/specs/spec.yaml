@@ -11,3 +11,19 @@ sklearn-model-1:
     REGISTERED_MODEL_NAME: DiabetesRF
     N_ESTIMATORS: 200
     MAX_DEPTH: 8
+
+pytorch-model-1:
+  trainer_image: trainer-pytorch-model-1:latest
+  image_options:
+    cpu: trainer-pytorch-model-1:latest
+  serve_image: server-pytorch-model-1:latest
+  serve_image_options:
+    cpu: server-pytorch-model-1:latest
+  timeout: 1800
+  env:
+    MLFLOW_EXPERIMENT: diabetes_torch_demo
+    REGISTERED_MODEL_NAME: DiabetesTorch
+    HIDDEN_DIM: 32
+    LEARNING_RATE: 0.001
+    EPOCHS: 250
+    BATCH_SIZE: 32

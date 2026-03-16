@@ -1,0 +1,19 @@
+# Only build the PyTorch trainer and serving images for the router.
+# The router will launch the trainer and serving containers later on demand.
+#
+
+services:
+  trainer-pytorch-model-1:
+    build:
+      context: .
+      dockerfile: docker_build/Dockerfile_training
+    image: trainer-pytorch-model-1:${TAG:-latest}
+
+  server-pytorch-model-1:
+    build:
+      context: .
+      dockerfile: docker_build/Dockerfile_serve
+    image: server-pytorch-model-1:${TAG:-latest}
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - REGISTERED_MODEL_NAME=DiabetesTorch

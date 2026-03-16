@@ -1,0 +1,20 @@
+[project]
+name = "pytorch-model-images"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "mlflow>=3.3.1",
+    "numpy>=2.3.2",
+    "pandas>=2.3.0",
+    "scikit-learn>=1.7.1",
+    "torch>=2.8.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.12.12",
+]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["F401"]
