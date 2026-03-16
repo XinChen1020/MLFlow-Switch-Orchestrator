@@ -83,6 +83,15 @@ The reference trainer in `model-images/sklearn-model-1/` demonstrates the main M
    curl http://localhost:8000/status
    ```
 7. Inspect MLflow runs and registered model versions at `http://localhost:${MLFLOW_SERVICE_PORT}`. The default external MLflow port is `9010`.
+8. Run the smoke test:
+   ```bash
+   ./scripts/smoke.sh
+   ```
+9. Run fast unit tests from the router project:
+   ```bash
+   cd router
+   uv run pytest tests
+   ```
 
 ## Demo Walkthrough
 
@@ -151,13 +160,13 @@ model-images/
 - The reference implementation ships with one bundled model backend: scikit-learn.
 - The default environment is local-only: local Docker, local MLflow, SQLite backend store, and file-based artifacts.
 - Rollback is currently achieved by re-promoting a previous version or alias through `/admin/roll`; there is not yet a dedicated one-click rollback endpoint.
-- Test coverage is still thin and should be expanded beyond a basic smoke path.
+- Test coverage is still thin beyond the current happy-path smoke test.
 - The project focuses on control-plane behavior and deployment workflow, not on advanced feature engineering or distributed training.
 
 ## Planned Extensions
 
 - Add an explicit rollback endpoint and richer deployment history.
 - Add a second reference backend, likely PyTorch, to demonstrate framework-agnostic specs more clearly.
-- Add smoke tests and targeted unit tests around trainer spec resolution and rollout state handling.
+- Expand smoke coverage and add targeted unit tests around trainer spec resolution and rollout state handling.
 - Support remote datasets and artifact stores such as S3-compatible storage.
 - Expand promotion policy options beyond direct production alias updates.

@@ -12,7 +12,31 @@ import config as cfg
 # ---- Clients ----
 mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
 ml_client = MlflowClient()
-docker_client = docker.DockerClient(base_url=cfg.DOCKER_HOST)
+
+
+class _LazyDockerClient:
+    """
+    Lazily construct the Docker client on first use.
+
+    This keeps module imports cheap for unit tests. Without this wrapper,
+    importing modules that reference `docker_client` tries to resolve the
+    configured Docker host immediately, which fails outside the full stack.
+    """
+
+    def __init__(self, base_url: str):
+        self._base_url = base_url
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            self._client = docker.DockerClient(base_url=self._base_url)
+        return self._client
+
+    def __getattr__(self, name: str):
+        return getattr(self._get_client(), name)
+
+
+docker_client = _LazyDockerClient(base_url=cfg.DOCKER_HOST)
 
 # ---- State ----
 DEFAULT_STATE = {
