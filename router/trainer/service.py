@@ -1,17 +1,23 @@
+"""Training orchestration for spec-driven MLflow-backed model runs."""
+
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
-from fastapi import HTTPException
 from docker.types import DeviceRequest
+from fastapi import HTTPException
+from mlflow import MlflowClient
 
 import config as cfg
 from common import docker_client
 from roll.service import RollService
-from mlflow import MlflowClient
+
+
+logger = logging.getLogger(__name__)
 
 
 class TrainerService:
@@ -36,7 +42,11 @@ class TrainerService:
       5) (Optional) roll out via RollService.
     """
 
-    def __init__(self, specs: Optional[Dict[str, Any]] = None, roll_service: Optional[RollService] = None):
+    def __init__(
+        self,
+        specs: Optional[Dict[str, Any]] = None,
+        roll_service: Optional[RollService] = None,
+    ):
         self._docker = docker_client
         self._specs = specs or cfg.load_specs()
         self._roll = roll_service or RollService()
@@ -76,23 +86,7 @@ class TrainerService:
         env.setdefault("MLFLOW_TRACKING_URI", cfg.MLFLOW_TRACKING_URI)
         serve_image = spec.get("selected_serve_image")
 
-        # Apply parameter overrides if there's any in the request
-        applied_parameters: Dict[str, Any] = {}
-        if parameters:
-            for key, value in parameters.items():
-                key_str = str(key)
-                if value is None:
-                    env.pop(key_str, None)
-                    applied_parameters[key_str] = None
-                    continue
-                if isinstance(value, (str, bytes)):
-                    env_value = value.decode("utf-8") if isinstance(value, bytes) else value
-                elif isinstance(value, (int, float, bool)):
-                    env_value = str(value)
-                else:
-                    env_value = json.dumps(value)
-                env[key_str] = env_value
-                applied_parameters[key_str] = env_value
+        applied_parameters = self._apply_parameters(env, parameters)
 
         selected_image_key = spec.get("selected_image_key")
         image_key_for_log = selected_image_key if selected_image_key not in (None, "") else "default"
@@ -103,18 +97,25 @@ class TrainerService:
 
         # Pre-create an MLflow run and pass its ID to the container
         request_id = uuid.uuid4().hex
-        run_id = self._create_run(experiment, {
-            "request_id": request_id,
-            "trainer": trainer,
-            "container_name": name,
-        })
+        run_id = self._create_run(
+            experiment,
+            {
+                "request_id": request_id,
+                "trainer": trainer,
+                "container_name": name,
+            },
+        )
         env["MLFLOW_RUN_ID"] = run_id
 
-        print(
-            "Starting trainer container "
-            f"{name} "
-            f"(image={image}, image_key={image_key_for_log}, serve_image={serve_image}, timeout={timeout}s, gpus={gpus}, "
-            f"parameters={applied_parameters or None})"
+        logger.info(
+            "Starting trainer container %s (image=%s, image_key=%s, serve_image=%s, timeout=%ss, gpus=%s, parameters=%s)",
+            name,
+            image,
+            image_key_for_log,
+            serve_image,
+            timeout,
+            gpus,
+            applied_parameters or None,
         )
 
         self._start_trainer(image=image, env=env, network=cfg.COMPOSE_NETWORK, name=name, gpus=gpus)
@@ -123,7 +124,7 @@ class TrainerService:
         version = None
         if status == 0:
             version = self._await_model_version(model_name, run_id)
-        
+
         metrics, run_parameters = self._collect_run_data(run_id)
 
         resp = {
@@ -136,20 +137,19 @@ class TrainerService:
             "metrics": metrics,
             "image_key": selected_image_key,
             "parameters": run_parameters or applied_parameters or None,
-            "serve_image": serve_image
+            "serve_image": serve_image,
         }
 
         if status != 0 or version is None:
             raise HTTPException(
                 status_code=500,
-                detail=
-                {
+                detail={
                     "error": f"trainer failed (exit={status})",
                     **resp,
                     "logs_tail": logs[-cfg.LOG_TAIL_ON_ERROR:],
                 },
             )
-            
+
         return resp
 
     def train_then_roll(
@@ -169,7 +169,7 @@ class TrainerService:
             image_key=image_key,
             parameters=parameters,
         )
-        print(f"Trainer completed: {train_resp}")
+        logger.info("Trainer completed successfully for %s: %s", trainer, train_resp)
         version = train_resp.get("version")
         model_name = train_resp.get("registered_model")
         if not version or not model_name:
@@ -195,6 +195,7 @@ class TrainerService:
                 resp["model_uri"] = roll_out["model_uri"]
             return resp
         except HTTPException as e:
+            logger.warning("Rollout failed after successful training for %s: %s", trainer, e.detail)
             return {**train_resp, "rolled": False, "logs_tail": f"roll failed: {e.detail}"}
 
     # ---------- MLflow helpers ----------
@@ -209,7 +210,13 @@ class TrainerService:
         run = self._ml.create_run(experiment_id=exp_id, tags=tags)
         return run.info.run_id
 
-    def _await_model_version(self, name: str, run_id: str, tries: int = 30, sleep_s: float = 1.0) -> Optional[int]:
+    def _await_model_version(
+        self,
+        name: str,
+        run_id: str,
+        tries: int = 30,
+        sleep_s: float = 1.0,
+    ) -> Optional[int]:
         """
         Poll the Model Registry for a version created by `run_id`.
         Returns the version number or None if not found within the time budget.
@@ -219,12 +226,12 @@ class TrainerService:
             mvs = list(self._ml.search_model_versions(query))
             if mvs:
                 try:
-
                     return int(mvs[0].version)
                 except Exception:
                     pass
             time.sleep(sleep_s)
         return None
+
     def _collect_run_data(
         self,
         run_id: str,
@@ -257,9 +264,41 @@ class TrainerService:
                         break
             time.sleep(sleep_s)
         return metrics, params
+
     # ---------- Docker helpers ----------
 
+    @staticmethod
+    def _apply_parameters(
+        env: Dict[str, str],
+        parameters: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Merge request-level parameter overrides into the trainer environment."""
+        applied_parameters: Dict[str, Any] = {}
+        if not parameters:
+            return applied_parameters
+
+        for key, value in parameters.items():
+            key_str = str(key)
+            if value is None:
+                env.pop(key_str, None)
+                applied_parameters[key_str] = None
+                continue
+
+            if isinstance(value, bytes):
+                env_value = value.decode("utf-8")
+            elif isinstance(value, str):
+                env_value = value
+            elif isinstance(value, (int, float, bool)):
+                env_value = str(value)
+            else:
+                env_value = json.dumps(value)
+
+            env[key_str] = env_value
+            applied_parameters[key_str] = env_value
+        return applied_parameters
+
     def _resolve_spec(self, trainer: str, image_key: Optional[str] = None) -> Dict[str, Any]:
+        """Resolve a trainer spec and apply image selection overrides."""
         image_key = image_key or None
         if trainer not in self._specs:
             raise HTTPException(
@@ -288,8 +327,7 @@ class TrainerService:
             if image_key not in options:
                 raise HTTPException(
                     status_code=400,
-                    detail=
-                    {
+                    detail={
                         "error": "unknown trainer image key",
                         "trainer": trainer,
                         "image_key": image_key,
@@ -300,8 +338,7 @@ class TrainerService:
         if not selected_image:
             raise HTTPException(
                 status_code=500,
-                detail=
-                {
+                detail={
                     "error": "trainer_image not configured",
                     "trainer": trainer,
                     "image_key": image_key,
@@ -315,14 +352,13 @@ class TrainerService:
         if serve_options_raw and not isinstance(serve_options_raw, dict):
             raise HTTPException(
                 status_code=500,
-                detail=
-                {
+                detail={
                     "error": "serve_image_options must be a mapping",
                     "trainer": trainer,
                     "image_key": image_key,
                 },
             )
-        
+
         serve_options = dict(serve_options_raw) if isinstance(serve_options_raw, dict) else {}
         default_serve_image = spec.get("serve_image") or cfg.SERVE_IMAGE
         selected_serve_image = default_serve_image
@@ -343,6 +379,7 @@ class TrainerService:
         return spec
 
     def _start_trainer(self, *, image: str, env: dict, network: str, name: str, gpus=None) -> str:
+        """Launch the trainer container with the resolved environment and resources."""
         kwargs = {
             "image": image,
             "name": name,
@@ -376,8 +413,8 @@ class TrainerService:
                 c.remove(force=True)
             except Exception:
                 pass
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Unable to inspect trainer container %s after launch: %s", name, exc)
         return status, logs_text
 
     @staticmethod

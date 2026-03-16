@@ -1,16 +1,20 @@
+"""Rollout service for promoting MLflow model versions behind a stable endpoint."""
+
 from __future__ import annotations
+
 import logging
-import time, httpx
+import time
 from typing import Any, Dict, Tuple, Union
 
-from fastapi import HTTPException
-from docker.errors import APIError, NotFound
+import httpx
 from docker.types import Healthcheck
+from fastapi import HTTPException
 
 import config as cfg
-from common import ml_client, docker_client, load_state, save_state, unique, ping
+from common import docker_client, load_state, ml_client, ping, save_state, unique
 
 logger = logging.getLogger(__name__)
+
 
 class RollService:
     def __init__(self, *, proxy_admin_url: str | None = None):
@@ -30,10 +34,18 @@ class RollService:
         target_uri, version = self._resolve_models_uri(name, ref)
 
         candidate_name = unique("serve-cand")
-        self._start_runtime(candidate_name, 
-                            cfg.COMPOSE_NETWORK, 
-                            target_uri, 
-                            serve_image=serve_image)
+        logger.info(
+            "Starting candidate serving container %s for %s version %s",
+            candidate_name,
+            name,
+            version,
+        )
+        self._start_runtime(
+            candidate_name,
+            cfg.COMPOSE_NETWORK,
+            target_uri,
+            serve_image=serve_image,
+        )
         cand_internal = f"http://{candidate_name}:{cfg.SERVE_PORT}"
 
         deadline = time.time() + wait_ready_seconds
@@ -45,6 +57,7 @@ class RollService:
             self._retire(state_name=candidate_name)
             raise HTTPException(status_code=503, detail="candidate not healthy")
 
+        logger.info("Switching proxy to candidate container %s", candidate_name)
         self._proxy_point_to(candidate_name)
         time.sleep(cfg.DRAIN_GRACE_SEC)
 
@@ -70,6 +83,12 @@ class RollService:
                 detail=f"failed to set alias '{cfg.PRODUCTION_ALIAS}' on model '{name}': {e}",
             )
 
+        logger.info(
+            "Promoted %s version %s to alias %s",
+            name,
+            version,
+            cfg.PRODUCTION_ALIAS,
+        )
         return {
             "active": candidate_name,
             "url": cand_internal,
@@ -101,20 +120,19 @@ class RollService:
         *,
         serve_image: str | None = None,
     ) -> str:
-        
         image = serve_image or cfg.SERVE_IMAGE
         if not image:
             raise HTTPException(
                 status_code=500,
-                detail="Serving image not configured; supply serve_image via the request or specs."
+                detail="Serving image not configured; supply serve_image via the request or specs.",
             )
-        
-        # Start a new container with healthcheck
+
+        # The serving runtime is considered ready once its health endpoint is responsive.
         healthcheck = Healthcheck(
-            test=["CMD", "curl", "--f",  f"http://localhost:{cfg.SERVE_PORT}/health"],
-            interval=5 * 10**9,     # 5s in nanoseconds
-            timeout=5 * 10**9,      # 5s
-            start_period=5 * 10**9, # 5s
+            test=["CMD", "curl", "--f", f"http://localhost:{cfg.SERVE_PORT}/health"],
+            interval=5 * 10**9,  # 5s in nanoseconds
+            timeout=5 * 10**9,  # 5s
+            start_period=5 * 10**9,  # 5s
             retries=3,
         )
 
@@ -126,11 +144,11 @@ class RollService:
             environment={
                 "MLFLOW_TRACKING_URI": cfg.MLFLOW_TRACKING_URI,
                 "SERVE_MODEL_URI": model_uri,
-                "SERVE_PORT": str(cfg.SERVE_PORT)
+                "SERVE_PORT": str(cfg.SERVE_PORT),
             },
             restart_policy={"Name": "on-failure", "MaximumRetryCount": 1},
             labels={"app": "mlflow-serve"},
-            healthcheck=healthcheck
+            healthcheck=healthcheck,
         )
         return container.id
 
@@ -138,15 +156,14 @@ class RollService:
         """
         Stop and remove a container by name, ignoring errors.
         """
-        
         if not state_name:
             return
         try:
             c = self._docker.containers.get(state_name)
-            c.stop(timeout=5) 
+            c.stop(timeout=5)
             c.remove()
-        except Exception:
-            print(f"Warning: failed to retire container {state_name}")
+        except Exception as exc:
+            logger.warning("Failed to retire container %s: %s", state_name, exc)
 
     def _make_caddy_config(self, target_container: str) -> Dict[str, Any]:
         """
@@ -179,7 +196,6 @@ class RollService:
         """
         Point Caddy proxy to target container using POST.
         """
-        
         cfg_json = self._make_caddy_config(target_container)
         r = httpx.post(self._admin_url, json=cfg_json, timeout=5.0)
         try:

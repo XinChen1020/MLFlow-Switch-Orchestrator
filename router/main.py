@@ -1,3 +1,5 @@
+"""FastAPI app wiring for status, training, and rollout APIs."""
+
 from __future__ import annotations
 
 import logging
@@ -53,9 +55,11 @@ async def lifespan(app: FastAPI):
         # No shutdown-time cleanup; roll workflow handles retirement explicitly.
         return
 
-app = FastAPI(title="Router (blue/green via Caddy proxy)", 
-              version="0.1",
-              lifespan=lifespan)
+app = FastAPI(
+    title="Router (blue/green via Caddy proxy)",
+    version="0.1",
+    lifespan=lifespan,
+)
 app.include_router(status_router)
 app.include_router(roll_router)
 app.include_router(trainer_router)
