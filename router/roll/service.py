@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from copy import deepcopy
+from pathlib import Path
 from typing import Any, Dict, Tuple, Union
 
 import httpx
@@ -21,6 +24,7 @@ class RollService:
         self._ml = ml_client
         self._docker = docker_client
         self._admin_url = (proxy_admin_url or cfg.PROXY_ADMIN_URL).rstrip("/") + "/load"
+        self._caddy_template_path = Path(__file__).with_name("caddy.json")
 
     # --- public API ---
     def roll(
@@ -235,30 +239,26 @@ class RollService:
 
     def _make_caddy_config(self, target_container: str) -> Dict[str, Any]:
         """
-        Make Caddy config to point to target container.
+        Load the saved Caddy config template and patch the runtime target values.
         """
-        return {
-            "admin": {"listen": ":2019"},
-            "apps": {
-                "http": {
-                    "servers": {
-                        "srv0": {
-                            "listen": [f":{cfg.PROXY_PUBLIC_PORT}"],
-                            "routes": [
-                                {
-                                    "handle": [
-                                        {
-                                            "handler": "reverse_proxy",
-                                            "upstreams": [{"dial": f"{target_container}:{cfg.SERVE_PORT}"}],
-                                        }
-                                    ]
-                                }
-                            ],
-                        }
-                    }
-                }
-            },
-        }
+        cfg_json = self._load_caddy_template()
+        cfg_json["admin"]["listen"] = ":2019"
+        cfg_json["apps"]["http"]["servers"]["srv0"]["listen"] = [f":{cfg.PROXY_PUBLIC_PORT}"]
+        cfg_json["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"][0]["upstreams"] = [
+            {"dial": f"{target_container}:{cfg.SERVE_PORT}"}
+        ]
+        return cfg_json
+
+    def _load_caddy_template(self) -> Dict[str, Any]:
+        """Read the checked-in Caddy JSON template and return a mutable copy."""
+        try:
+            with self._caddy_template_path.open("r", encoding="utf-8") as handle:
+                return deepcopy(json.load(handle))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"failed to load Caddy config template: {exc}",
+            ) from exc
 
     def _proxy_point_to(self, target_container: str) -> None:
         """
