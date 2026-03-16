@@ -78,7 +78,7 @@ The reference trainer in `model-images/sklearn-model-1/` demonstrates the main M
        }
      }'
    ```
-6. Inspect the active deployment:
+6. Inspect the active deployment, including the active model version:
    ```bash
    curl http://localhost:8000/status
    ```
@@ -93,7 +93,7 @@ For a short walkthrough, the cleanest demo path is:
 3. In MLflow, show the resulting run, dataset inputs, parameters, evaluation metrics, and registered model version.
 4. Show that rollout creates or updates the active serving container only after health checks pass.
 5. Hit the stable `/invocations` endpoint through the proxy.
-6. Call `/status` to show what is currently serving production traffic.
+6. Call `/status` to show the active container, model name, model version, and production alias.
 7. Mention that `/admin/roll` can promote an existing model version or alias without retraining.
 
 ## Creating Your Own Trainer and Serving Images
@@ -119,7 +119,7 @@ Serving-only promotions can reuse existing registry entries by invoking `/admin/
 
 | Endpoint | Method | Description | Example |
 | --- | --- | --- | --- |
-| `/status` | `GET` | Returns the active deployment summary and health indicator. | `curl http://localhost:8000/status` |
+| `/status` | `GET` | Returns the active deployment summary, model metadata, and health indicator. | `curl http://localhost:8000/status` |
 | `/admin/train/{trainer}` | `POST` | Launches the trainer defined by `{trainer}`. Accepts optional `wait_seconds`, `image_key`, and `parameters` overrides. | `curl -X POST http://localhost:8000/admin/train/sklearn-model-1 -H 'Content-Type: application/json' -d '{"parameters":{"N_ESTIMATORS":128}}'` |
 | `/admin/train_then_roll/{trainer}` | `POST` | Runs training and, on success, deploys the produced model using the configured serving image. | `curl -X POST http://localhost:8000/admin/train_then_roll/sklearn-model-1 -H 'Content-Type: application/json' -d '{"wait_seconds":600}'` |
 | `/admin/roll` | `POST` | Promotes an existing MLflow model version or alias into production without retraining. | `curl -X POST http://localhost:8000/admin/roll -H 'Content-Type: application/json' -d '{"name":"DiabetesRF","ref":"@staging"}'` |
@@ -131,6 +131,7 @@ Serving-only promotions can reuse existing registry entries by invoking `/admin/
 - The reference trainer logs dataset-level lineage and standardized evaluation artifacts to MLflow, not just a final model file.
 - Rollout uses a blue/green-style candidate container, health check gate, and proxy cutover.
 - Active deployment state is persisted to disk so router restarts can validate and recover the last-known active target.
+- `/status` exposes both container-level and model-level deployment state for operational checks and demos.
 
 ## Example Directory Layout
 
