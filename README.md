@@ -1,18 +1,57 @@
 # MLFlow Switch Orchestrator
 
-This projoect provides endpoints for training and rolling deployments of MLflow-registered models with zero-down time. A FastAPI router coordinates on-demand trainers, manages candidate containers, and flips a Caddy reverse proxy once health checks pass.
+MLFlow Switch Orchestrator is a lightweight ML deployment system for spec-driven training, MLflow-backed lineage, controlled model promotion, and zero-downtime serving behind a stable inference endpoint.
+
+The main workflow is:
+
+- launch training from a spec
+- pre-create and track the run in MLflow
+- register the resulting model version
+- start a candidate serving container and wait for health checks
+- switch traffic without changing the public inference endpoint
+
+Key behaviors:
+
+- **Spec-driven training**: trainer definitions live in `router/specs/spec.yaml`.
+- **MLflow lineage**: the router injects `MLFLOW_RUN_ID` into the trainer container and resolves the model version created by that run.
+- **Controlled promotion**: rollout happens only after a candidate serving container is healthy.
+- **Stable serving endpoint**: the active model can change without changing the public inference URL.
+- **Serving-only promotion**: existing model versions or aliases can be promoted through `/admin/roll`.
 
 ## System Overview
 
-- **Router service (`router/`)** – FastAPI admin surface that validates persisted rollout state on startup, launches trainer containers, registers model versions in MLflow, and rolls new revisions by updating the proxy and MLflow aliases.
-- **Trainer containers (`model-images/`)** – Spec-driven workloads that receive environment overrides, log lineage/metrics to MLflow, and optionally trigger immediate rollout.
-- **Serve containers** – Runtime images (e.g., the reference scikit-learn inference image) that pull the promoted model artifacts from MLflow and expose inference APIs once traffic is flipped to them.
-- **MLflow tracking** – Local MLflow server with SQLite backend store and file-based artifacts used by both trainers and the router.
-- **Caddy proxy + socket proxy** – Caddy exposes a stable public port while the router talks to Docker through a restricted socket proxy for safer automation.
+- **Router service (`router/`)**: FastAPI control plane that loads trainer specs, launches training containers, tracks MLflow runs, resolves model versions, and coordinates rollout.
+- **Trainer containers (`model-images/`)**: model-specific training jobs that log parameters, metrics, datasets, and registered models to MLflow.
+- **Serve containers**: runtime images that load a promoted MLflow model URI and expose inference APIs.
+- **MLflow tracking server**: central source of truth for experiment runs, model versions, aliases, and artifacts.
+- **Caddy reverse proxy**: stable public inference entrypoint that is flipped only after a candidate server is healthy.
+- **Docker socket proxy**: narrows the router's Docker access surface while still allowing container lifecycle automation.
+
+## End-to-End Flow
+
+1. A request hits `/admin/train/{trainer}` or `/admin/train_then_roll/{trainer}`.
+2. The router resolves the trainer spec and pre-creates an MLflow run.
+3. The trainer container receives `MLFLOW_RUN_ID` plus any spec-defined or request-level parameters.
+4. The training job logs dataset lineage, hyperparameters, evaluation metrics, and a registered model into MLflow.
+5. The router resolves the model version associated with that exact run.
+6. For rollout, the router starts a candidate serving container pointed at `models:/<name>/<version>`.
+7. If the candidate passes health checks, the proxy flips traffic to it and the previous serving container is retired.
+8. Clients continue using the same inference endpoint while the production model version changes underneath it.
+
+## Training and Tracking
+
+The reference trainer in `model-images/sklearn-model-1/` demonstrates the main ML workflow:
+
+- dataset lineage is logged for training, validation, and evaluation splits
+- hyperparameters and dataset metadata are recorded on the run
+- evaluation uses `mlflow.evaluate` for standardized regression metrics
+- the trained model is registered into the MLflow Model Registry
+- the rollout path updates the production alias after a successful deployment
 
 ## Getting Started
-1. Create a `.env` with any overrides for the variables referenced in `docker-compose.prod.yaml` (defaults work for local testing).
-2. Build the reference trainer and serving images that power the bundled `sklearn-model-1` spec using the provided compose file (it tags both images as `:latest` by default):
+
+1. Create a `.env` with any overrides for the variables referenced in `docker-compose.prod.yaml`. The defaults are enough for local testing.
+2. Build the reference trainer and serving images used by the bundled `sklearn-model-1` spec:
    ```bash
    docker compose -f model-images/sklearn-model-1/docker-compose.prod.yml build
    ```
@@ -20,14 +59,14 @@ This projoect provides endpoints for training and rolling deployments of MLflow-
    ```bash
    docker compose -f docker-compose.prod.yaml up --build
    ```
-4. Trigger training or a train-then-rollout via the admin API (example uses the bundled `sklearn-model-1` spec):
+4. Trigger a train-and-roll flow:
    ```bash
    curl -X POST \
      'http://localhost:8000/admin/train_then_roll/sklearn-model-1' \
      -H 'Content-Type: application/json' \
      -d '{"wait_seconds": 600, "parameters": {"N_ESTIMATORS": 256}}'
    ```
-5. Once the rollout completes, call the active MLflow inference server (proxied on port `9000`) to score requests. The payload below mirrors `test_script.sh` and uses `dataframe_split` formatting:
+5. Query the stable inference endpoint after rollout completes:
    ```bash
    curl -X POST \
      'http://localhost:9000/invocations' \
@@ -39,16 +78,30 @@ This projoect provides endpoints for training and rolling deployments of MLflow-
        }
      }'
    ```
-6. Check router status and the active public endpoint:
+6. Inspect the active deployment:
    ```bash
    curl http://localhost:8000/status
    ```
-7. Inspect experiment runs and registered models in MLflow at `http://localhost:${MLFLOW_SERVICE_PORT}` (defaults to `http://localhost:9010` unless overridden in your `.env`).
+7. Inspect MLflow runs and registered model versions at `http://localhost:${MLFLOW_SERVICE_PORT}`. The default external MLflow port is `9010`.
+
+## Demo Walkthrough
+
+For a short walkthrough, the cleanest demo path is:
+
+1. Show the trainer spec in `router/specs/spec.yaml`.
+2. Trigger `/admin/train_then_roll/sklearn-model-1` with one hyperparameter override.
+3. In MLflow, show the resulting run, dataset inputs, parameters, evaluation metrics, and registered model version.
+4. Show that rollout creates or updates the active serving container only after health checks pass.
+5. Hit the stable `/invocations` endpoint through the proxy.
+6. Call `/status` to show what is currently serving production traffic.
+7. Mention that `/admin/roll` can promote an existing model version or alias without retraining.
 
 ## Creating Your Own Trainer and Serving Images
-1. **Duplicate the sample project** – Copy `model-images/sklearn-model-1/` to a new folder and adjust its source to prepare data, train, and log to MLflow the way your model requires.
-2. **Author Dockerfiles + compose entry** – Update the `docker_build/` Dockerfiles (or create new ones) to install dependencies and define the entrypoints for training (`Dockerfile_training`) and serving (`Dockerfile_serve`). Extend `docker-compose.prod.yml` (or create a sibling compose file) so `docker compose build` produces the trainer and serving images with tags that match what you plan to reference in router specs.
-3. **Register the spec** – Add a new entry to `router/specs/spec.yaml` pointing at your trainer and server images, default environment variables, timeouts, and any image selectors you need:
+
+1. Copy `model-images/sklearn-model-1/` into a new model-specific folder.
+2. Update the training code to prepare data, train, evaluate, and log into MLflow for your model.
+3. Update the Dockerfiles so `docker compose build` produces trainer and serving images with the tags referenced by the router spec.
+4. Add a new trainer entry to `router/specs/spec.yaml`:
    ```yaml
    my-new-model:
      trainer_image: trainer-my-model:latest
@@ -58,45 +111,52 @@ This projoect provides endpoints for training and rolling deployments of MLflow-
        REGISTERED_MODEL_NAME: MyCoolModel
        MLFLOW_EXPERIMENT: my_experiment
    ```
-4. **Trigger via API** – Call `/admin/train/{spec-name}` to launch training or `/admin/train_then_roll/{spec-name}` to train and deploy. The router injects MLflow credentials/IDs and, on success, can immediately roll out your serving image.
+5. Trigger training through `/admin/train/{spec-name}` or `/admin/train_then_roll/{spec-name}`.
 
-Serving-only rollouts can reuse existing registry entries by invoking `/admin/roll` with a model name and version or alias.
+Serving-only promotions can reuse existing registry entries by invoking `/admin/roll` with a model name and version or alias.
 
 ## API Quick Reference
 
 | Endpoint | Method | Description | Example |
 | --- | --- | --- | --- |
-| `/status` | `GET` | Returns the active container ID, internal URL, public proxy URL, and health indicator. | `curl http://localhost:8000/status` |
+| `/status` | `GET` | Returns the active deployment summary and health indicator. | `curl http://localhost:8000/status` |
 | `/admin/train/{trainer}` | `POST` | Launches the trainer defined by `{trainer}`. Accepts optional `wait_seconds`, `image_key`, and `parameters` overrides. | `curl -X POST http://localhost:8000/admin/train/sklearn-model-1 -H 'Content-Type: application/json' -d '{"parameters":{"N_ESTIMATORS":128}}'` |
 | `/admin/train_then_roll/{trainer}` | `POST` | Runs training and, on success, deploys the produced model using the configured serving image. | `curl -X POST http://localhost:8000/admin/train_then_roll/sklearn-model-1 -H 'Content-Type: application/json' -d '{"wait_seconds":600}'` |
 | `/admin/roll` | `POST` | Promotes an existing MLflow model version or alias into production without retraining. | `curl -X POST http://localhost:8000/admin/roll -H 'Content-Type: application/json' -d '{"name":"DiabetesRF","ref":"@staging"}'` |
 
 ## Design Notes
-- Trainer specs (`router/specs/`) map trainer names to Docker images, optional image selectors, timeouts, GPU needs, and environment variables. Requests may add overrides or choose alternate images.
-- Before a trainer container starts, the router pre-creates an MLflow run and injects `MLFLOW_RUN_ID`, giving reliable lineage between automation and the registry entry.
-- Completed trainers optionally trigger the rollout service, which stands up the candidate container, waits for health checks, flips the proxy to the new target, and records the active container ID on disk for crash-safe recovery.
-- The rollout API can also promote an existing registered model version or alias without retraining, keeping model deployment and training concerns loosely coupled.
+
+- Trainer specs map logical workloads to Docker images, environment defaults, and rollout behavior.
+- The router creates the MLflow run before training starts so container execution and model registry lineage stay tied together.
+- The reference trainer logs dataset-level lineage and standardized evaluation artifacts to MLflow, not just a final model file.
+- Rollout uses a blue/green-style candidate container, health check gate, and proxy cutover.
+- Active deployment state is persisted to disk so router restarts can validate and recover the last-known active target.
 
 ## Example Directory Layout
-```
+
+```text
 router/
 ├── main.py              # FastAPI app wiring status, trainer, and rollout routers
-├── specs/spec.yaml      # Sample trainer specification(s)
-├── trainer/             # Admin endpoints + Docker orchestration helpers
-├── roll/                # Blue/green deployment service and health checks
+├── specs/spec.yaml      # Trainer specifications
+├── trainer/             # Training orchestration and MLflow run management
+├── roll/                # Candidate deployment and proxy switching
 └── status/              # Active deployment status endpoint
 model-images/
-└── sklearn-model-1/     # Reference trainer + server build contexts
+└── sklearn-model-1/     # Reference scikit-learn trainer and serving images
 ```
 
-## To Do
-- [x] Document architecture, quickstart workflow, and design decisions for the orchestrator.
-- [x] Publish example admin API usage for training and rollout flows.
-- [x] Ship the reference scikit-learn trainer + inference images that back the `sklearn-model-1` spec.
-- [ ] Add PyTorch + Hugging Face example trainer and serving images.
-- [ ] Build a simple UI to visualize training progress and the active deployment slot.
-- [ ] Integrate Apache Airflow for time- or performance-triggered retraining workflows.
-- [ ] Improve streaming data ingestion/management strategy for near-real-time retraining.
-- [ ] Add unit test coverage for critical router and trainer components.
-- [ ] Introduce smoke tests to validate end-to-end deployment flows after changes.
-- [ ] Allows datasource other than local (such as AWS S3)
+## Current Limitations
+
+- The reference implementation ships with one bundled model backend: scikit-learn.
+- The default environment is local-only: local Docker, local MLflow, SQLite backend store, and file-based artifacts.
+- Rollback is currently achieved by re-promoting a previous version or alias through `/admin/roll`; there is not yet a dedicated one-click rollback endpoint.
+- Test coverage is still thin and should be expanded beyond a basic smoke path.
+- The project focuses on control-plane behavior and deployment workflow, not on advanced feature engineering or distributed training.
+
+## Planned Extensions
+
+- Add an explicit rollback endpoint and richer deployment history.
+- Add a second reference backend, likely PyTorch, to demonstrate framework-agnostic specs more clearly.
+- Add smoke tests and targeted unit tests around trainer spec resolution and rollout state handling.
+- Support remote datasets and artifact stores such as S3-compatible storage.
+- Expand promotion policy options beyond direct production alias updates.
