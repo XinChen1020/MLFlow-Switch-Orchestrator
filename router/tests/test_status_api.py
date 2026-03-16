@@ -12,10 +12,10 @@ import status.api as status_api
 
 def test_model_name_from_uri_parses_mlflow_model_uris() -> None:
     """Model names should be extracted only from valid MLflow registry URIs."""
-    assert status_api._model_name_from_uri("models:/DiabetesRF/7") == "DiabetesRF"
-    assert status_api._model_name_from_uri("models:/MyModel/production") == "MyModel"
-    assert status_api._model_name_from_uri(None) is None
-    assert status_api._model_name_from_uri("runs:/abc123/model") is None
+    assert status_api.model_name_from_uri("models:/DiabetesRF/7") == "DiabetesRF"
+    assert status_api.model_name_from_uri("models:/MyModel/production") == "MyModel"
+    assert status_api.model_name_from_uri(None) is None
+    assert status_api.model_name_from_uri("runs:/abc123/model") is None
 
 
 def test_status_returns_model_metadata_and_public_url_fallback(monkeypatch) -> None:
@@ -32,9 +32,12 @@ def test_status_returns_model_metadata_and_public_url_fallback(monkeypatch) -> N
         "active": "serve-cand-123",
         "url": "http://serve-cand-123:8080",
         "public_url": None,
+        "model_name": None,
         "model_uri": "models:/DiabetesRF/7",
         "model_version": 7,
         "model_alias": "production",
+        "serve_image": "server-sklearn-model-1:latest",
+        "previous": None,
         "ts": 1735689600.0,
     }
 

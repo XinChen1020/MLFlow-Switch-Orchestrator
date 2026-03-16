@@ -49,9 +49,12 @@ DEFAULT_STATE = {
     "active": None,
     "url": None,
     "public_url": None,
+    "model_name": None,
     "model_uri": None,
     "model_version": None,
     "model_alias": None,
+    "serve_image": None,
+    "previous": None,
     "ts": None,
 }
 
@@ -81,6 +84,17 @@ def save_state(s: Dict[str, Any]) -> None:
 def unique(prefix: str) -> str:
     """Generate a readable, low-collision name for short-lived containers."""
     return f"{prefix}-{int(time.time()*1000)}-{uuid.uuid4().hex[:6]}"
+
+
+def model_name_from_uri(model_uri: str | None) -> str | None:
+    """Extract the registered model name from an MLflow registry URI."""
+    if not model_uri or not model_uri.startswith("models:/"):
+        return None
+
+    parts = model_uri.split("/")
+    if len(parts) < 3:
+        return None
+    return parts[1].removeprefix("models:")
 
 
 def ping(url: str, timeout: float = 3.0) -> bool:

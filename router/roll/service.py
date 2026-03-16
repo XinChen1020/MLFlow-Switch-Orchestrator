@@ -11,7 +11,7 @@ from docker.types import Healthcheck
 from fastapi import HTTPException
 
 import config as cfg
-from common import docker_client, load_state, ml_client, ping, save_state, unique
+from common import docker_client, load_state, ml_client, model_name_from_uri, ping, save_state, unique
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ class RollService:
         serve_image: str | None = None,
     ) -> Dict[str, str]:
         target_uri, version = self._resolve_models_uri(name, ref)
+        image = self._resolve_serve_image(serve_image)
 
         candidate_name = unique("serve-cand")
         logger.info(
@@ -44,7 +45,7 @@ class RollService:
             candidate_name,
             cfg.COMPOSE_NETWORK,
             target_uri,
-            serve_image=serve_image,
+            serve_image=image,
         )
         cand_internal = f"http://{candidate_name}:{cfg.SERVE_PORT}"
 
@@ -62,15 +63,19 @@ class RollService:
         time.sleep(cfg.DRAIN_GRACE_SEC)
 
         state = load_state()
+        previous_state = self._snapshot_state(state)
         self._retire(state.get("active"))
 
         new_state = {
             "active": candidate_name,
             "url": cand_internal,
             "public_url": f"http://{cfg.PUBLIC_HOST}:{cfg.PROXY_PUBLIC_PORT}",
+            "model_name": name,
             "model_uri": target_uri,
             "model_version": version,
             "model_alias": cfg.PRODUCTION_ALIAS,
+            "serve_image": image,
+            "previous": previous_state,
             "ts": time.time(),
         }
         save_state(new_state)
@@ -98,6 +103,46 @@ class RollService:
             "version": version,
         }
 
+    def rollback(
+        self,
+        *,
+        wait_ready_seconds: int,
+        serve_image: str | None = None,
+    ) -> Dict[str, str]:
+        """Roll back to the previously active deployment captured in state."""
+        state = load_state()
+        previous = state.get("previous")
+        if not isinstance(previous, dict):
+            raise HTTPException(status_code=409, detail="no previous deployment recorded for rollback")
+
+        model_name = previous.get("model_name") or model_name_from_uri(previous.get("model_uri"))
+        version = previous.get("model_version")
+        if not model_name or version is None:
+            raise HTTPException(
+                status_code=409,
+                detail="previous deployment is missing model_name or model_version",
+            )
+
+        rollback_image = serve_image or previous.get("serve_image") or state.get("serve_image")
+        if not rollback_image:
+            raise HTTPException(
+                status_code=409,
+                detail="previous deployment is missing serve_image; provide one explicitly",
+            )
+
+        logger.info(
+            "Rolling back to previous deployment %s version %s using serve_image=%s",
+            model_name,
+            version,
+            rollback_image,
+        )
+        return self.roll(
+            name=model_name,
+            ref=int(version),
+            wait_ready_seconds=wait_ready_seconds,
+            serve_image=rollback_image,
+        )
+
     # --- helpers ---
     def _resolve_models_uri(self, name: str, ref: Union[str, int]) -> Tuple[str, int]:
         try:
@@ -120,13 +165,6 @@ class RollService:
         *,
         serve_image: str | None = None,
     ) -> str:
-        image = serve_image or cfg.SERVE_IMAGE
-        if not image:
-            raise HTTPException(
-                status_code=500,
-                detail="Serving image not configured; supply serve_image via the request or specs.",
-            )
-
         # The serving runtime is considered ready once its health endpoint is responsive.
         healthcheck = Healthcheck(
             test=["CMD", "curl", "--f", f"http://localhost:{cfg.SERVE_PORT}/health"],
@@ -137,7 +175,7 @@ class RollService:
         )
 
         container = self._docker.containers.run(
-            image=image,
+            image=serve_image,
             name=name,
             detach=True,
             network=network,
@@ -151,6 +189,36 @@ class RollService:
             healthcheck=healthcheck,
         )
         return container.id
+
+    @staticmethod
+    def _resolve_serve_image(serve_image: str | None) -> str:
+        """Resolve the serving image from the request or router configuration."""
+        image = serve_image or cfg.SERVE_IMAGE
+        if not image:
+            raise HTTPException(
+                status_code=500,
+                detail="Serving image not configured; supply serve_image via the request or specs.",
+            )
+        return image
+
+    @staticmethod
+    def _snapshot_state(state: Dict[str, Any]) -> Dict[str, Any] | None:
+        """Capture the currently active deployment so it can be rolled back to later."""
+        if not state.get("active"):
+            return None
+
+        snapshot = {
+            "active": state.get("active"),
+            "url": state.get("url"),
+            "public_url": state.get("public_url"),
+            "model_name": state.get("model_name") or model_name_from_uri(state.get("model_uri")),
+            "model_uri": state.get("model_uri"),
+            "model_version": state.get("model_version"),
+            "model_alias": state.get("model_alias"),
+            "serve_image": state.get("serve_image"),
+            "ts": state.get("ts"),
+        }
+        return snapshot
 
     def _retire(self, state_name: str | None) -> None:
         """

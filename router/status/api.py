@@ -1,10 +1,12 @@
+"""Status API for the currently active deployment behind the stable endpoint."""
+
 from __future__ import annotations
 from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 import config as cfg
-from common import load_state, ping
+from common import load_state, model_name_from_uri, ping
 
 router = APIRouter()
 
@@ -19,17 +21,6 @@ class StatusResp(BaseModel):
     model_alias: Optional[str] = None
     ts: Optional[float] = None
 
-
-def _model_name_from_uri(model_uri: Optional[str]) -> Optional[str]:
-    if not model_uri or not model_uri.startswith("models:/"):
-        return None
-
-    parts = model_uri.split("/")
-    if len(parts) < 3:
-        return None
-    return parts[1].removeprefix("models:")
-
-
 @router.get("/status", response_model=StatusResp)
 def status() -> StatusResp:
     s = load_state()
@@ -41,7 +32,7 @@ def status() -> StatusResp:
         url=internal,
         public_url=public_url,
         healthy=ping(internal) if internal else False,
-        model_name=_model_name_from_uri(model_uri),
+        model_name=s.get("model_name") or model_name_from_uri(model_uri),
         model_uri=model_uri,
         model_version=s.get("model_version"),
         model_alias=s.get("model_alias"),

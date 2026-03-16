@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
                     "active": None,
                     "url": None,
                     "public_url": None,
+                    "model_name": None,
+                    "model_uri": None,
+                    "model_version": None,
+                    "model_alias": None,
+                    "serve_image": None,
                 }
             )
             save_state(cleared_state)

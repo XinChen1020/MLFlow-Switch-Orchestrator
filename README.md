@@ -17,6 +17,7 @@ Key behaviors:
 - **Controlled promotion**: rollout happens only after a candidate serving container is healthy.
 - **Stable serving endpoint**: the active model can change without changing the public inference URL.
 - **Serving-only promotion**: existing model versions or aliases can be promoted through `/admin/roll`.
+- **Explicit rollback**: the previous active deployment is recorded on each successful promotion and can be restored through `/admin/rollback`.
 
 ## System Overview
 
@@ -132,6 +133,7 @@ Serving-only promotions can reuse existing registry entries by invoking `/admin/
 | `/admin/train/{trainer}` | `POST` | Launches the trainer defined by `{trainer}`. Accepts optional `wait_seconds`, `image_key`, and `parameters` overrides. | `curl -X POST http://localhost:8000/admin/train/sklearn-model-1 -H 'Content-Type: application/json' -d '{"parameters":{"N_ESTIMATORS":128}}'` |
 | `/admin/train_then_roll/{trainer}` | `POST` | Runs training and, on success, deploys the produced model using the configured serving image. | `curl -X POST http://localhost:8000/admin/train_then_roll/sklearn-model-1 -H 'Content-Type: application/json' -d '{"wait_seconds":600}'` |
 | `/admin/roll` | `POST` | Promotes an existing MLflow model version or alias into production without retraining. | `curl -X POST http://localhost:8000/admin/roll -H 'Content-Type: application/json' -d '{"name":"DiabetesRF","ref":"@staging"}'` |
+| `/admin/rollback` | `POST` | Rolls back to the previously active deployment recorded during the last successful promotion. | `curl -X POST http://localhost:8000/admin/rollback -H 'Content-Type: application/json' -d '{}'` |
 
 ## Design Notes
 
@@ -140,6 +142,7 @@ Serving-only promotions can reuse existing registry entries by invoking `/admin/
 - The reference trainer logs dataset-level lineage and standardized evaluation artifacts to MLflow, not just a final model file.
 - Rollout uses a blue/green-style candidate container, health check gate, and proxy cutover.
 - Active deployment state is persisted to disk so router restarts can validate and recover the last-known active target.
+- Successful promotions also persist the previous deployment so rollback can be triggered without manually supplying a model version.
 - `/status` exposes both container-level and model-level deployment state for operational checks and demos.
 
 ## Example Directory Layout
@@ -159,13 +162,13 @@ model-images/
 
 - The reference implementation ships with one bundled model backend: scikit-learn.
 - The default environment is local-only: local Docker, local MLflow, SQLite backend store, and file-based artifacts.
-- Rollback is currently achieved by re-promoting a previous version or alias through `/admin/roll`; there is not yet a dedicated one-click rollback endpoint.
+- Rollback currently tracks only the immediately previous deployment, not a full deployment history.
 - Test coverage is still thin beyond the current happy-path smoke test.
 - The project focuses on control-plane behavior and deployment workflow, not on advanced feature engineering or distributed training.
 
 ## Planned Extensions
 
-- Add an explicit rollback endpoint and richer deployment history.
+- Expand rollback from a single previous deployment into a richer deployment history.
 - Add a second reference backend, likely PyTorch, to demonstrate framework-agnostic specs more clearly.
 - Expand smoke coverage and add targeted unit tests around trainer spec resolution and rollout state handling.
 - Support remote datasets and artifact stores such as S3-compatible storage.
