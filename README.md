@@ -163,19 +163,6 @@ The reference trainer in `model-images/sklearn-model-1/` demonstrates the main M
    uv run pytest tests
    ```
 
-## Demo Walkthrough
-
-For a short walkthrough, the cleanest demo path is:
-
-1. Show the trainer spec in `router/specs/spec.yaml`.
-2. Trigger `/admin/train_then_roll/sklearn-model-1` with one hyperparameter override.
-   For a faster live walkthrough, include `DATASET_SAMPLE_ROWS` so the full orchestration path stays visible without waiting on the full dataset.
-3. In MLflow, show the resulting run, dataset inputs, parameters, evaluation metrics, and registered model version.
-4. Show that rollout creates or updates the active serving container only after health checks pass.
-5. Hit the stable `/invocations` endpoint through the proxy.
-6. Call `/status` to show the active container, model name, model version, and registry alias.
-7. Mention that `/admin/roll` can promote an existing model version or alias without retraining.
-
 ## Creating Your Own Trainer and Serving Images
 
 1. Copy `model-images/sklearn-model-1/` into a new model-specific folder.
