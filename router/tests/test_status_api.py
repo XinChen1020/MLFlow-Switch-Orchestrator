@@ -35,7 +35,7 @@ def test_status_returns_model_metadata_and_public_url_fallback(monkeypatch) -> N
         "model_name": None,
         "model_uri": "models:/DiabetesRF/7",
         "model_version": 7,
-        "model_alias": "production",
+        "model_alias": "deployed",
         "serve_image": "server-sklearn-model-1:latest",
         "previous": None,
         "ts": 1735689600.0,
@@ -58,5 +58,5 @@ def test_status_returns_model_metadata_and_public_url_fallback(monkeypatch) -> N
     assert response.model_name == "DiabetesRF"
     assert response.model_uri == "models:/DiabetesRF/7"
     assert response.model_version == 7
-    assert response.model_alias == "production"
+    assert response.model_alias == "deployed"
     assert response.ts == 1735689600.0

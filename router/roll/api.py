@@ -13,7 +13,7 @@ _svc = RollService()
 
 class RollReq(BaseModel):
     name: str = Field(..., examples=["DiabetesRF"])
-    ref: Union[str, int] = Field(..., examples=["@production", 17])
+    ref: Union[str, int] = Field(..., examples=["@deployed", 17])
     wait_ready_seconds: int = Field(default=cfg.HEALTH_TIMEOUT_SEC, ge=1, le=900)
     serve_image: str | None = Field(
         default=None,

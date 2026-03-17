@@ -1,6 +1,6 @@
 # MLFlow Switch Orchestrator
 
-MLFlow Switch Orchestrator is a lightweight ML deployment system for spec-driven training, MLflow-backed lineage, controlled model promotion, and zero-downtime serving behind a stable inference endpoint.
+MLFlow Switch Orchestrator is a lightweight ML deployment control plane for spec-driven training, MLflow-backed run-to-model lineage, controlled model promotion, and stable inference serving.
 
 The main workflow is:
 
@@ -27,6 +27,15 @@ Key behaviors:
 - **MLflow tracking server**: central source of truth for experiment runs, model versions, aliases, and artifacts.
 - **Caddy reverse proxy**: stable public inference entrypoint that is flipped only after a candidate server is healthy.
 - **Docker socket proxy**: narrows the router's Docker access surface while still allowing container lifecycle automation.
+
+For control-plane API and trainer spec details, see `router/README.txt`.
+
+## Training and Promotion Flow
+
+- it pre-creates the MLflow run and injects `MLFLOW_RUN_ID` into the trainer container
+- it resolves the exact registered model version created by that run before promotion
+- it supports serving-only promotion through `/admin/roll`
+- it records the previous deployment to support explicit rollback through `/admin/rollback`
 
 ## Architecture Diagram
 ```mermaid
@@ -91,7 +100,7 @@ The reference trainer in `model-images/sklearn-model-1/` demonstrates the main M
 - hyperparameters and dataset metadata are recorded on the run
 - evaluation uses `mlflow.evaluate` for standardized regression metrics
 - the trained model is registered into the MLflow Model Registry
-- the rollout path updates the production alias after a successful deployment
+- the rollout path updates a per-model registry alias after a successful deployment
 
 ## Getting Started
 
@@ -164,7 +173,7 @@ For a short walkthrough, the cleanest demo path is:
 3. In MLflow, show the resulting run, dataset inputs, parameters, evaluation metrics, and registered model version.
 4. Show that rollout creates or updates the active serving container only after health checks pass.
 5. Hit the stable `/invocations` endpoint through the proxy.
-6. Call `/status` to show the active container, model name, model version, and production alias.
+6. Call `/status` to show the active container, model name, model version, and registry alias.
 7. Mention that `/admin/roll` can promote an existing model version or alias without retraining.
 
 ## Creating Your Own Trainer and Serving Images
@@ -222,18 +231,9 @@ model-images/
 └── sklearn-model-1/     # Reference scikit-learn trainer and serving images
 ```
 
-## Current Limitations
-
-- The reference implementation ships with two bundled model backends: scikit-learn and PyTorch.
-- The default environment is local-only: local Docker, local MLflow, SQLite backend store, and file-based artifacts.
-- Rollback currently tracks only the immediately previous deployment, not a full deployment history.
-- Test coverage is still thin beyond the current happy-path and rollback smoke scenarios.
-- The project focuses on control-plane behavior and deployment workflow, not on advanced feature engineering or distributed training.
-
 ## Future Improvements
 
-- Expand rollback from a single previous deployment into a richer deployment history.
-- Add a more complex second-stage backend, likely transformer-based, to extend the framework-agnostic story beyond tabular regression.
-- Add more targeted unit tests around trainer spec resolution and rollout state handling.
-- Support remote datasets and artifact stores such as S3-compatible storage.
-- Expand promotion policy options beyond direct production alias updates.
+- The default setup is a local reference deployment focused on control-plane behavior: local Docker, local MLflow, SQLite backend store, and file-based artifacts.
+- Rollback currently tracks only the immediately previous deployment rather than a fuller deployment history.
+- The current test suite focuses on smoke coverage for the happy path and rollback flow; broader unit and integration coverage would be the next step.
+- Future extensions include richer promotion states, a more complex second-stage backend, and support for remote datasets and artifact stores.

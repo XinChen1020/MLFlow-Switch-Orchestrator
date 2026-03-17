@@ -217,8 +217,10 @@ def main() -> None:
             registered_model_name=registered_model,
         )
 
-        eval_df = X_te.copy()
-        eval_df[target_col] = y_te.values
+        # Keep evaluation inputs aligned with the float32 model signature that
+        # was logged via mlflow.pytorch.
+        eval_df = X_te.astype(np.float32).copy()
+        eval_df[target_col] = y_te.to_numpy(dtype=np.float32)
         result = mlflow.evaluate(
             model=f"runs:/{run_id}/model",
             data=eval_df,

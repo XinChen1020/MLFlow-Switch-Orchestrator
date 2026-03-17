@@ -23,7 +23,7 @@ def test_snapshot_state_captures_previous_deployment_metadata() -> None:
         "model_name": None,
         "model_uri": "models:/DiabetesRF/7",
         "model_version": 7,
-        "model_alias": "production",
+        "model_alias": "deployed",
         "serve_image": "server-sklearn-model-1:latest",
         "ts": 1735689600.0,
     }
@@ -37,7 +37,7 @@ def test_snapshot_state_captures_previous_deployment_metadata() -> None:
         "model_name": "DiabetesRF",
         "model_uri": "models:/DiabetesRF/7",
         "model_version": 7,
-        "model_alias": "production",
+        "model_alias": "deployed",
         "serve_image": "server-sklearn-model-1:latest",
         "ts": 1735689600.0,
     }

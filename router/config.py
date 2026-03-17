@@ -27,7 +27,7 @@ PUBLIC_HOST          = os.getenv("PUBLIC_HOST", "localhost")
 # Trainer specs (directory or single file)
 SPECS_PATH   = os.getenv("SPECS_PATH")  # e.g., /app/trainer-specs
 
-PRODUCTION_ALIAS = os.getenv("PRODUCTION_ALIAS", "production")
+PRODUCTION_ALIAS = os.getenv("PRODUCTION_ALIAS", "deployed")
 DEV_ALIAS = os.getenv("DEV_ALIAS", "dev")
 
 def _read_text(path: str) -> str:

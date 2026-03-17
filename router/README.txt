@@ -70,7 +70,7 @@ Returns the active deployment summary, including:
 - active model name
 - active model URI
 - active model version
-- active model alias
+- active model registry alias
 
 Example:
 
@@ -135,7 +135,6 @@ curl -X POST \
 ## Future Improvements
 
 - Move training and rollout into an asynchronous job model instead of holding the request open.
-- Add a dedicated job-status API for long-running training and promotion workflows.
-- Persist control-plane state in a stronger backing store than a local JSON file.
-- Add policy hooks for approval, validation, or automatic rollback before production alias updates.
+- Add a dedicated job-status API and a stronger backing store for control-plane state.
+- Introduce clearer multi-stage registry aliases and policy hooks around promotion.
 - Add authentication and authorization around the admin endpoints.
