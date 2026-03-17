@@ -2,7 +2,8 @@
 
 The router service exposes a small admin surface for launching model trainers and
 rolling out the resulting models. Trainer behavior is defined via YAML or JSON
-specifications in `trainer-specs/`.
+specifications loaded from `SPECS_PATH`; in this repo that defaults to
+`router/specs/`.
 
 ## Trainer specifications
 
@@ -55,3 +56,86 @@ The `POST /admin/roll` endpoint accepts an optional `serve_image` field when you
 want to override the runtime on a per-request basis. When the field is omitted,
 the router falls back to the serving image resolved from the trainer spec (or
 from the `SERVE_IMAGE` environment variable for backwards compatibility).
+
+## Endpoint reference
+
+### `GET /status`
+
+Returns the active deployment summary, including:
+
+- active serving container
+- internal service URL
+- stable public URL
+- health state
+- active model name
+- active model URI
+- active model version
+- active model alias
+
+Example:
+
+```bash
+curl http://localhost:8000/status
+```
+
+### `POST /admin/train/{trainer}`
+
+Launches the trainer defined by `{trainer}` and waits for completion.
+
+Example:
+
+```bash
+curl -X POST \
+  http://localhost:8000/admin/train/sklearn-model-1 \
+  -H 'Content-Type: application/json' \
+  -d '{"parameters":{"DATASET_SAMPLE_ROWS":96,"N_ESTIMATORS":32}}'
+```
+
+### `POST /admin/train_then_roll/{trainer}`
+
+Runs training and, on success, deploys the produced model using the resolved
+serving image from the trainer spec or request.
+
+Example:
+
+```bash
+curl -X POST \
+  http://localhost:8000/admin/train_then_roll/sklearn-model-1 \
+  -H 'Content-Type: application/json' \
+  -d '{"wait_seconds":600,"parameters":{"DATASET_SAMPLE_ROWS":96,"N_ESTIMATORS":32}}'
+```
+
+### `POST /admin/roll`
+
+Promotes an existing MLflow model version or alias without retraining.
+
+Example:
+
+```bash
+curl -X POST \
+  http://localhost:8000/admin/roll \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"DiabetesRF","ref":"@staging"}'
+```
+
+### `POST /admin/rollback`
+
+Restores the previously active deployment recorded during the last successful
+promotion.
+
+Example:
+
+```bash
+curl -X POST \
+  http://localhost:8000/admin/rollback \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+## Future Improvements
+
+- Move training and rollout into an asynchronous job model instead of holding the request open.
+- Add a dedicated job-status API for long-running training and promotion workflows.
+- Persist control-plane state in a stronger backing store than a local JSON file.
+- Add policy hooks for approval, validation, or automatic rollback before production alias updates.
+- Add authentication and authorization around the admin endpoints.

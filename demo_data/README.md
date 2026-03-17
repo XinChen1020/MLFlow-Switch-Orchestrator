@@ -17,4 +17,5 @@ uv run python ../../demo_data/prepare_demo_data.py
 ```
 
 The trainers still accept arbitrary datasets by overriding `DATASET_PATH` and
-`TARGET_COLUMN`.
+`TARGET_COLUMN`. For faster demos or smoke tests, they also accept
+`DATASET_SAMPLE_ROWS` to train on a deterministic subset of the same CSV.

@@ -28,6 +28,20 @@ Key behaviors:
 - **Caddy reverse proxy**: stable public inference entrypoint that is flipped only after a candidate server is healthy.
 - **Docker socket proxy**: narrows the router's Docker access surface while still allowing container lifecycle automation.
 
+## Architecture Diagram
+
+Add the architecture diagram here.
+
+This is the best place for a Mermaid diagram because it sits between the
+high-level system summary and the more detailed end-to-end flow. A good diagram
+should show:
+
+- trainer spec resolution
+- trainer container launch
+- MLflow tracking and model registry
+- candidate serving container startup
+- proxy cutover to the stable inference endpoint
+
 ## Reference Backends
 
 - **`sklearn-model-1`**: a scikit-learn random forest regressor on the diabetes dataset.
@@ -43,6 +57,7 @@ deterministic while still allowing custom data.
 
 - Default demo mode: the trainer spec sets `DATASET_PATH=/app/demo_data/diabetes.csv` and `TARGET_COLUMN=target`.
 - Custom dataset mode: override `DATASET_PATH` and `TARGET_COLUMN` in the train request parameters or spec.
+- Fast demo mode: optionally set `DATASET_SAMPLE_ROWS` to train on a deterministic sample of the same dataset.
 - Dataset metadata: `DATASET_NAME` and `DATASET_VERSION` are logged to MLflow alongside the run.
 
 If you want to regenerate the checked-in demo CSV:
@@ -93,14 +108,14 @@ The reference trainer in `model-images/sklearn-model-1/` demonstrates the main M
    curl -X POST \
      'http://localhost:8000/admin/train_then_roll/sklearn-model-1' \
      -H 'Content-Type: application/json' \
-     -d '{"wait_seconds": 600, "parameters": {"N_ESTIMATORS": 256}}'
+     -d '{"wait_seconds": 600, "parameters": {"DATASET_SAMPLE_ROWS": 96, "N_ESTIMATORS": 32}}'
    ```
    Or run the PyTorch backend:
    ```bash
    curl -X POST \
      'http://localhost:8000/admin/train_then_roll/pytorch-model-1' \
      -H 'Content-Type: application/json' \
-     -d '{"wait_seconds": 600, "parameters": {"EPOCHS": 300, "HIDDEN_DIM": 64}}'
+     -d '{"wait_seconds": 600, "parameters": {"DATASET_SAMPLE_ROWS": 96, "EPOCHS": 40, "HIDDEN_DIM": 16}}'
    ```
 5. Query the stable inference endpoint after rollout completes:
    ```bash
@@ -123,6 +138,7 @@ The reference trainer in `model-images/sklearn-model-1/` demonstrates the main M
    ```bash
    ./scripts/smoke.sh
    ```
+   The smoke tests use lighter training overrides and sampled rows so the live path completes faster than the default demo request.
    To run the explicit rollback smoke scenario:
    ```bash
    ./scripts/smoke-rollback.sh
@@ -139,6 +155,7 @@ For a short walkthrough, the cleanest demo path is:
 
 1. Show the trainer spec in `router/specs/spec.yaml`.
 2. Trigger `/admin/train_then_roll/sklearn-model-1` with one hyperparameter override.
+   For a faster live walkthrough, include `DATASET_SAMPLE_ROWS` so the full orchestration path stays visible without waiting on the full dataset.
 3. In MLflow, show the resulting run, dataset inputs, parameters, evaluation metrics, and registered model version.
 4. Show that rollout creates or updates the active serving container only after health checks pass.
 5. Hit the stable `/invocations` endpoint through the proxy.
@@ -164,15 +181,18 @@ For a short walkthrough, the cleanest demo path is:
 
 Serving-only promotions can reuse existing registry entries by invoking `/admin/roll` with a model name and version or alias.
 
-## API Quick Reference
+## Router API
 
-| Endpoint | Method | Description | Example |
-| --- | --- | --- | --- |
-| `/status` | `GET` | Returns the active deployment summary, model metadata, and health indicator. | `curl http://localhost:8000/status` |
-| `/admin/train/{trainer}` | `POST` | Launches the trainer defined by `{trainer}`. Accepts optional `wait_seconds`, `image_key`, and `parameters` overrides. | `curl -X POST http://localhost:8000/admin/train/sklearn-model-1 -H 'Content-Type: application/json' -d '{"parameters":{"N_ESTIMATORS":128}}'` |
-| `/admin/train_then_roll/{trainer}` | `POST` | Runs training and, on success, deploys the produced model using the configured serving image. | `curl -X POST http://localhost:8000/admin/train_then_roll/sklearn-model-1 -H 'Content-Type: application/json' -d '{"wait_seconds":600}'` |
-| `/admin/roll` | `POST` | Promotes an existing MLflow model version or alias into production without retraining. | `curl -X POST http://localhost:8000/admin/roll -H 'Content-Type: application/json' -d '{"name":"DiabetesRF","ref":"@staging"}'` |
-| `/admin/rollback` | `POST` | Rolls back to the previously active deployment recorded during the last successful promotion. | `curl -X POST http://localhost:8000/admin/rollback -H 'Content-Type: application/json' -d '{}'` |
+The control-plane API lives in `router/` and is documented in
+[`router/README.txt`](router/README.txt).
+
+The main endpoints are:
+
+- `GET /status` for active deployment state and health
+- `POST /admin/train/{trainer}` for synchronous training
+- `POST /admin/train_then_roll/{trainer}` for train-and-promote
+- `POST /admin/roll` for serving-only promotion of an existing model version or alias
+- `POST /admin/rollback` for restoring the previously active deployment
 
 ## Design Notes
 
@@ -202,13 +222,13 @@ model-images/
 - The reference implementation ships with two bundled model backends: scikit-learn and PyTorch.
 - The default environment is local-only: local Docker, local MLflow, SQLite backend store, and file-based artifacts.
 - Rollback currently tracks only the immediately previous deployment, not a full deployment history.
-- Test coverage is still thin beyond the current happy-path smoke test.
+- Test coverage is still thin beyond the current happy-path and rollback smoke scenarios.
 - The project focuses on control-plane behavior and deployment workflow, not on advanced feature engineering or distributed training.
 
-## Planned Extensions
+## Future Improvements
 
 - Expand rollback from a single previous deployment into a richer deployment history.
 - Add a more complex second-stage backend, likely transformer-based, to extend the framework-agnostic story beyond tabular regression.
-- Expand smoke coverage and add targeted unit tests around trainer spec resolution and rollout state handling.
+- Add more targeted unit tests around trainer spec resolution and rollout state handling.
 - Support remote datasets and artifact stores such as S3-compatible storage.
 - Expand promotion policy options beyond direct production alias updates.
