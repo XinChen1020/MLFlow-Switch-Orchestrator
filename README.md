@@ -30,17 +30,22 @@ Key behaviors:
 
 ## Architecture Diagram
 
-Add the architecture diagram here.
+flowchart TD
+    A[Trainer spec] --> R[Router control plane]
+    B[Train / train_then_roll request] --> R
 
-This is the best place for a Mermaid diagram because it sits between the
-high-level system summary and the more detailed end-to-end flow. A good diagram
-should show:
+    R -->|pre-create run| M[MLflow tracking]
+    R -->|launch trainer container| T[Sklearn or PyTorch trainer]
+    T -->|log params, metrics, datasets, model| M
+    M --> G[MLflow registry]
 
-- trainer spec resolution
-- trainer container launch
-- MLflow tracking and model registry
-- candidate serving container startup
-- proxy cutover to the stable inference endpoint
+    R -->|resolve model version or alias| G
+    R -->|start candidate serve container| S[Serve container]
+    S -->|health check passes| P[Caddy stable endpoint]
+    P --> C[Client /invocations]
+
+    R --> X[Persist active + previous deployment]
+    X --> RB[Rollback available]
 
 ## Reference Backends
 
