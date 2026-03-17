@@ -29,7 +29,7 @@ Key behaviors:
 - **Docker socket proxy**: narrows the router's Docker access surface while still allowing container lifecycle automation.
 
 ## Architecture Diagram
-
+```mermaid
 flowchart TD
     A[Trainer spec] --> R[Router control plane]
     B[Train / train_then_roll request] --> R
@@ -46,7 +46,7 @@ flowchart TD
 
     R --> X[Persist active + previous deployment]
     X --> RB[Rollback available]
-
+```
 ## Reference Backends
 
 - **`sklearn-model-1`**: a scikit-learn random forest regressor on the diabetes dataset.
