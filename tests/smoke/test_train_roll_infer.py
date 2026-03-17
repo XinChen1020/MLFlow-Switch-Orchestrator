@@ -27,10 +27,12 @@ except ImportError:  # pragma: no cover - optional during direct script executio
 
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_TRAIN_REQUEST_TIMEOUT_SECONDS = 300.0
 DEFAULT_STATUS_ATTEMPTS = 30
 DEFAULT_STATUS_SLEEP_SECONDS = 2.0
 DEFAULT_WAIT_SECONDS = 600
 DEFAULT_TRAINER_NAME = "sklearn-model-1"
+DEFAULT_ROLLBACK_PARAM_DELTA = 64
 
 DEFAULT_INFERENCE_PAYLOAD = {
     "dataframe_split": {
@@ -46,25 +48,37 @@ class SmokeConfig:
     inference_url: str
     trainer_name: str
     wait_seconds: int
+    train_request_timeout_seconds: float
     request_timeout_seconds: float
     status_attempts: int
     status_sleep_seconds: float
+    run_rollback_smoke: bool
 
 
 def _load_config() -> SmokeConfig:
     """Load runtime configuration from the environment with local defaults."""
+    wait_seconds = int(os.getenv("WAIT_SECONDS", str(DEFAULT_WAIT_SECONDS)))
+    request_timeout_seconds = float(
+        os.getenv("REQUEST_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
+    )
+    train_request_timeout_seconds = float(
+        os.getenv(
+            "TRAIN_REQUEST_TIMEOUT_SECONDS",
+            str(max(DEFAULT_TRAIN_REQUEST_TIMEOUT_SECONDS, wait_seconds + 60)),
+        )
+    )
     return SmokeConfig(
         router_url=os.getenv("ROUTER_URL", "http://localhost:8000").rstrip("/"),
         inference_url=os.getenv("INFERENCE_URL", "http://localhost:9000").rstrip("/"),
         trainer_name=os.getenv("TRAINER_NAME", DEFAULT_TRAINER_NAME),
-        wait_seconds=int(os.getenv("WAIT_SECONDS", str(DEFAULT_WAIT_SECONDS))),
-        request_timeout_seconds=float(
-            os.getenv("REQUEST_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
-        ),
+        wait_seconds=wait_seconds,
+        train_request_timeout_seconds=train_request_timeout_seconds,
+        request_timeout_seconds=request_timeout_seconds,
         status_attempts=int(os.getenv("STATUS_ATTEMPTS", str(DEFAULT_STATUS_ATTEMPTS))),
         status_sleep_seconds=float(
             os.getenv("STATUS_SLEEP_SECONDS", str(DEFAULT_STATUS_SLEEP_SECONDS))
         ),
+        run_rollback_smoke=os.getenv("RUN_ROLLBACK_SMOKE") == "1",
     )
 
 
@@ -103,14 +117,9 @@ def run_smoke_test() -> None:
     config = _load_config()
 
     print(f"Triggering train-and-roll for {config.trainer_name}...", flush=True)
-    train_response = _json_request(
-        "POST",
-        f"{config.router_url}/admin/train_then_roll/{config.trainer_name}",
-        payload={
-            "wait_seconds": config.wait_seconds,
-            "parameters": {"N_ESTIMATORS": 256},
-        },
-        timeout=config.request_timeout_seconds,
+    train_response = _trigger_train_then_roll(
+        config,
+        parameters=_default_train_parameters(config.trainer_name),
     )
     _assert_train_response(train_response)
     print(json.dumps(_train_summary(train_response), indent=2), flush=True)
@@ -130,7 +139,78 @@ def run_smoke_test() -> None:
     _assert_inference_response(inference_response)
     print(json.dumps(inference_response, indent=2), flush=True)
 
+    if config.run_rollback_smoke:
+        _run_rollback_smoke(config, train_response)
+
     print("Smoke test completed successfully.", flush=True)
+
+
+def _default_train_parameters(trainer_name: str) -> dict[str, Any]:
+    """Use a small trainer-specific override so each rollout produces a fresh version."""
+    if trainer_name == "pytorch-model-1":
+        return {"EPOCHS": 300, "HIDDEN_DIM": 64}
+    return {"N_ESTIMATORS": 256}
+
+
+def _rollback_parameters(trainer_name: str) -> dict[str, Any]:
+    """Use a second override to force a new model version before rollback."""
+    if trainer_name == "pytorch-model-1":
+        return {"EPOCHS": 320, "HIDDEN_DIM": 64}
+    return {"N_ESTIMATORS": 256 + DEFAULT_ROLLBACK_PARAM_DELTA}
+
+
+def _trigger_train_then_roll(
+    config: SmokeConfig,
+    *,
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    """Trigger the synchronous train-and-roll route with caller-provided overrides."""
+    return _json_request(
+        "POST",
+        f"{config.router_url}/admin/train_then_roll/{config.trainer_name}",
+        payload={
+            "wait_seconds": config.wait_seconds,
+            "parameters": parameters,
+        },
+        # train_then_roll is synchronous, so it needs a much longer request
+        # timeout than quick status or inference checks.
+        timeout=config.train_request_timeout_seconds,
+    )
+
+
+def _run_rollback_smoke(config: SmokeConfig, initial_train_response: dict[str, Any]) -> None:
+    """
+    Run one extra smoke path for explicit rollback.
+
+    This remains opt-in because it requires a second full promotion before the
+    rollback target exists.
+    """
+    print("Running rollback smoke path...", flush=True)
+    second_train_response = _trigger_train_then_roll(
+        config,
+        parameters=_rollback_parameters(config.trainer_name),
+    )
+    _assert_train_response(second_train_response)
+    if second_train_response.get("version") == initial_train_response.get("version"):
+        raise AssertionError("second train_then_roll did not produce a new model version")
+    print(json.dumps(_train_summary(second_train_response), indent=2), flush=True)
+
+    print("Calling rollback endpoint...", flush=True)
+    rollback_response = _json_request(
+        "POST",
+        f"{config.router_url}/admin/rollback",
+        payload={"wait_ready_seconds": config.wait_seconds},
+        timeout=config.train_request_timeout_seconds,
+    )
+    print(json.dumps(rollback_response, indent=2), flush=True)
+
+    print("Waiting for /status to reflect the rollback...", flush=True)
+    rolled_back_status = _wait_for_status(
+        config,
+        expected_version=initial_train_response.get("version"),
+    )
+    _assert_rollback_matches_initial(rolled_back_status, initial_train_response)
+    print(json.dumps(_status_summary(rolled_back_status), indent=2), flush=True)
 
 
 def _assert_train_response(payload: dict[str, Any]) -> None:
@@ -143,7 +223,11 @@ def _assert_train_response(payload: dict[str, Any]) -> None:
         raise AssertionError(f"train_then_roll did not report a successful rollout: {payload}")
 
 
-def _wait_for_status(config: SmokeConfig) -> dict[str, Any]:
+def _wait_for_status(
+    config: SmokeConfig,
+    *,
+    expected_version: int | None = None,
+) -> dict[str, Any]:
     """Poll /status until the active deployment is healthy and versioned."""
     last_status: dict[str, Any] | None = None
     for _ in range(config.status_attempts):
@@ -155,7 +239,12 @@ def _wait_for_status(config: SmokeConfig) -> dict[str, Any]:
         last_status = status_response
         # The rollout is considered ready only once health checks pass and the
         # active model version is visible in the persisted deployment state.
-        if status_response.get("healthy") is True and status_response.get("model_version"):
+        version = status_response.get("model_version")
+        if (
+            status_response.get("healthy") is True
+            and version
+            and (expected_version is None or version == expected_version)
+        ):
             return status_response
         time.sleep(config.status_sleep_seconds)
 
@@ -175,6 +264,17 @@ def _assert_status_matches_train(
         )
     if status_response.get("healthy") is not True:
         raise AssertionError(f"deployment is not healthy: {status_response}")
+
+
+def _assert_rollback_matches_initial(
+    status_response: dict[str, Any],
+    initial_train_response: dict[str, Any],
+) -> None:
+    """Confirm /status returns to the version that was active before rollback."""
+    if status_response.get("model_version") != initial_train_response.get("version"):
+        raise AssertionError("rollback did not restore the initial model version")
+    if status_response.get("healthy") is not True:
+        raise AssertionError(f"rolled back deployment is not healthy: {status_response}")
 
 
 def _assert_inference_response(payload: Any) -> None:
