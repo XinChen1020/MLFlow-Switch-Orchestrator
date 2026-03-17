@@ -4,15 +4,19 @@ RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+COPY model-images/pytorch-model-1/pyproject.toml ./
 RUN pip install --no-cache-dir \
     "mlflow==3.3.1" \
     "numpy>=2.3.2" \
     "pandas>=2.3.0" \
-    "torch>=2.8.0"
     "scikit-learn>=1.7.1"
 
-COPY src/ .
+# The demo backend is CPU-only, so use the CPU wheel index to reduce download size.
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    "torch==2.5.1"
+
+COPY model-images/pytorch-model-1/src/ .
 COPY demo_data/ ./demo_data/
 
 ENTRYPOINT ["python", "/app/train.py"]
