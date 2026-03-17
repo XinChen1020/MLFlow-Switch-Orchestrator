@@ -2,8 +2,9 @@
 
 The router service exposes a small admin surface for launching model trainers and
 rolling out the resulting models. Trainer behavior is defined via YAML or JSON
-specifications loaded from `SPECS_PATH`; in this repo that defaults to
-`router/specs/`.
+specifications loaded from `SPECS_PATH`; in this repo, `docker-compose.prod.yaml`
+sets `SPECS_PATH=/app/specs`, which maps to `router/specs/` inside the router
+container.
 
 ## Trainer specifications
 

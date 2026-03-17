@@ -196,7 +196,14 @@ class TrainerService:
             return resp
         except HTTPException as e:
             logger.warning("Rollout failed after successful training for %s: %s", trainer, e.detail)
-            return {**train_resp, "rolled": False, "logs_tail": f"roll failed: {e.detail}"}
+            raise HTTPException(
+                status_code=e.status_code,
+                detail={
+                    "error": "rollout failed after successful training",
+                    "training": train_resp,
+                    "rollout_error": e.detail,
+                },
+            ) from e
 
     # ---------- MLflow helpers ----------
 

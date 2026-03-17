@@ -34,7 +34,7 @@ class RollService:
         ref: Union[str, int],
         wait_ready_seconds: int,
         serve_image: str | None = None,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         target_uri, version = self._resolve_models_uri(name, ref)
         image = self._resolve_serve_image(serve_image)
 
@@ -70,6 +70,19 @@ class RollService:
         previous_state = self._snapshot_state(state)
         self._retire(state.get("active"))
 
+        alias_name: str | None = None
+        try:
+            self._ml.set_registered_model_alias(name, cfg.PRODUCTION_ALIAS, str(version))
+            alias_name = cfg.PRODUCTION_ALIAS
+        except Exception as exc:
+            logger.warning(
+                "Promoted live traffic to %s version %s but failed to set alias %s: %s",
+                name,
+                version,
+                cfg.PRODUCTION_ALIAS,
+                exc,
+            )
+
         new_state = {
             "active": candidate_name,
             "url": cand_internal,
@@ -77,33 +90,28 @@ class RollService:
             "model_name": name,
             "model_uri": target_uri,
             "model_version": version,
-            "model_alias": cfg.PRODUCTION_ALIAS,
+            "model_alias": alias_name,
             "serve_image": image,
             "previous": previous_state,
             "ts": time.time(),
         }
         save_state(new_state)
 
-        try:
-            self._ml.set_registered_model_alias(name, cfg.PRODUCTION_ALIAS, str(version))
-        except Exception as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"failed to set alias '{cfg.PRODUCTION_ALIAS}' on model '{name}': {e}",
+        if alias_name:
+            logger.info(
+                "Promoted %s version %s to alias %s",
+                name,
+                version,
+                alias_name,
             )
-
-        logger.info(
-            "Promoted %s version %s to alias %s",
-            name,
-            version,
-            cfg.PRODUCTION_ALIAS,
-        )
+        else:
+            logger.info("Promoted %s version %s without updating a registry alias", name, version)
         return {
             "active": candidate_name,
             "url": cand_internal,
             "public_url": new_state["public_url"],
             "model_uri": target_uri,
-            "alias": cfg.PRODUCTION_ALIAS,
+            "alias": alias_name,
             "version": version,
         }
 
@@ -112,7 +120,7 @@ class RollService:
         *,
         wait_ready_seconds: int,
         serve_image: str | None = None,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """Roll back to the previously active deployment captured in state."""
         state = load_state()
         previous = state.get("previous")
