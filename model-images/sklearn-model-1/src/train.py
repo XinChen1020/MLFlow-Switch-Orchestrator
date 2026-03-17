@@ -2,7 +2,7 @@
 """
 RandomForestRegressor training with MLflow tracking and evaluation.
 
-- Reads a CSV via DATASET_PATH + TARGET_COLUMN (or generates a diabetes demo CSV).
+- Reads a CSV via DATASET_PATH + TARGET_COLUMN.
 - Splits Train / Val / Test.
 - Logs dataset lineage with mlflow.log_input (contexts: training, validation, evaluation).
 - Logs parameters and registers the model.
@@ -12,8 +12,10 @@ Environment:
   MLFLOW_TRACKING_URI        MLflow tracking server URI
   MLFLOW_EXPERIMENT          Experiment name (default: "diabetes_rf_demo")
   REGISTERED_MODEL_NAME      Model Registry name (default: "DiabetesRF")
-  DATASET_PATH               CSV path; if unset, a demo CSV is created under ./demo/data/diabetes.csv
-  TARGET_COLUMN              Target column name (required if DATASET_PATH is set)
+  DATASET_PATH               CSV path (default: "/app/demo_data/diabetes.csv")
+  TARGET_COLUMN              Target column name (default: "target")
+  DATASET_NAME               Dataset display name logged to MLflow (default: "demo_diabetes")
+  DATASET_VERSION            Dataset version metadata logged to MLflow (default: "v1")
   TEST_SIZE                  Test fraction (default "0.2")
   VAL_SIZE                   Validation fraction of non-test portion (default "0.2")
   RANDOM_STATE               Random seed (default "42")
@@ -33,7 +35,14 @@ import mlflow.sklearn
 from mlflow import MlflowClient
 from sklearn import __version__ as sklearn_version
 from sklearn.ensemble import RandomForestRegressor
-from helpers import prepare_demo_csv, load_csv, split_train_val_test, log_dataset_stage, resolve_version_for_run
+from helpers import (
+    DEFAULT_DATASET_PATH,
+    DEFAULT_TARGET_COLUMN,
+    load_csv,
+    log_dataset_stage,
+    resolve_version_for_run,
+    split_train_val_test,
+)
 
 
 # ---------- Logging & Experiment ----------
@@ -52,14 +61,15 @@ client = MlflowClient()
 # ---------- Main ----------
 
 def main() -> None:
-    # Data source selection
-    dataset_path = os.getenv("DATASET_PATH")
-    target_col = os.getenv("TARGET_COLUMN")
-    if not dataset_path:
-        dataset_path, target_col = prepare_demo_csv(os.getenv("DEMO_DIR", "./demo/data"))
-        log.info("Using demo CSV: %s (target='%s')", dataset_path, target_col)
-    elif not target_col:
-        raise ValueError("TARGET_COLUMN must be set when DATASET_PATH is provided.")
+    # The demo images ship with a small checked-in CSV, but callers can still
+    # override the dataset path and target column for custom data.
+    dataset_path = os.getenv("DATASET_PATH", DEFAULT_DATASET_PATH)
+    target_col = os.getenv("TARGET_COLUMN", DEFAULT_TARGET_COLUMN)
+    dataset_name = os.getenv("DATASET_NAME", "demo_diabetes")
+    dataset_version = os.getenv("DATASET_VERSION", "v1")
+
+    if not Path(dataset_path).exists():
+        raise FileNotFoundError(f"Dataset not found at: {dataset_path}")
 
     # Load & split
     X, y = load_csv(dataset_path, target_col)
@@ -99,6 +109,8 @@ def main() -> None:
                 "feature_count": X.shape[1],
                 "sklearn_version": sklearn_version,
                 "dataset_path": dataset_path,
+                "dataset_name": dataset_name,
+                "dataset_version": dataset_version,
                 "target_column": target_col,
             }
         )

@@ -9,8 +9,10 @@ Environment:
   MLFLOW_TRACKING_URI        MLflow tracking server URI
   MLFLOW_EXPERIMENT          Experiment name (default: "diabetes_torch_demo")
   REGISTERED_MODEL_NAME      Model Registry name (default: "DiabetesTorch")
-  DATASET_PATH               CSV path; if unset, a demo CSV is created under ./demo/data/diabetes.csv
-  TARGET_COLUMN              Target column name (required if DATASET_PATH is set)
+  DATASET_PATH               CSV path (default: "/app/demo_data/diabetes.csv")
+  TARGET_COLUMN              Target column name (default: "target")
+  DATASET_NAME               Dataset display name logged to MLflow (default: "demo_diabetes")
+  DATASET_VERSION            Dataset version metadata logged to MLflow (default: "v1")
   TEST_SIZE                  Test fraction (default "0.2")
   VAL_SIZE                   Validation fraction of non-test portion (default "0.2")
   RANDOM_STATE               Random seed (default "42")
@@ -41,9 +43,10 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from helpers import (
+    DEFAULT_DATASET_PATH,
+    DEFAULT_TARGET_COLUMN,
     log_dataset_stage,
     load_csv,
-    prepare_demo_csv,
     resolve_version_for_run,
     split_train_val_test,
 )
@@ -103,13 +106,13 @@ def _evaluate_regression(model: nn.Module, X: pd.DataFrame, y: pd.Series) -> dic
 
 
 def main() -> None:
-    dataset_path = os.getenv("DATASET_PATH")
-    target_col = os.getenv("TARGET_COLUMN")
-    if not dataset_path:
-        dataset_path, target_col = prepare_demo_csv(os.getenv("DEMO_DIR", "./demo/data"))
-        log.info("Using demo CSV: %s (target='%s')", dataset_path, target_col)
-    elif not target_col:
-        raise ValueError("TARGET_COLUMN must be set when DATASET_PATH is provided.")
+    dataset_path = os.getenv("DATASET_PATH", DEFAULT_DATASET_PATH)
+    target_col = os.getenv("TARGET_COLUMN", DEFAULT_TARGET_COLUMN)
+    dataset_name = os.getenv("DATASET_NAME", "demo_diabetes")
+    dataset_version = os.getenv("DATASET_VERSION", "v1")
+
+    if not Path(dataset_path).exists():
+        raise FileNotFoundError(f"Dataset not found at: {dataset_path}")
 
     X, y = load_csv(dataset_path, target_col)
     test_size = float(os.getenv("TEST_SIZE", "0.2"))
@@ -168,6 +171,8 @@ def main() -> None:
                 "sklearn_version": sklearn_version,
                 "torch_version": torch.__version__,
                 "dataset_path": dataset_path,
+                "dataset_name": dataset_name,
+                "dataset_version": dataset_version,
                 "target_column": target_col,
             }
         )

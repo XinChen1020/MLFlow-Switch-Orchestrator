@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 # uv for fast installs
-COPY --from=ghcr.io/astral-sh/uv:0.4.20 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.8.11 /uv /uvx /bin/
 ENV UV_SYSTEM_PYTHON=1 \
     UV_LINK_MODE=copy \
     PYTHONDONTWRITEBYTECODE=1 \

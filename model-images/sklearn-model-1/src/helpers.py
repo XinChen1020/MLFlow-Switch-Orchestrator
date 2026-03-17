@@ -4,38 +4,17 @@ helpers.py — small, documented utilities for data IO, splitting, and dataset l
 
 from __future__ import annotations
 
-from pathlib import Path
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 import mlflow
 import numpy as np
 import pandas as pd
-from sklearn.datasets import load_diabetes
 from sklearn.model_selection import train_test_split
 
 
-def prepare_demo_csv(dst_dir: str = "./demo/data") -> Tuple[str, str]:
-    """
-    Create a Diabetes CSV (regression) at `dst_dir` and return (path, target_col).
-
-    Parameters
-    ----------
-    dst_dir : str
-        Destination directory for the CSV file.
-
-    Returns
-    -------
-    path : str
-        Filesystem path to the created CSV.
-    target_col : str
-        Name of the target column in the CSV ("target").
-    """
-    Path(dst_dir).mkdir(parents=True, exist_ok=True)
-    df = load_diabetes(as_frame=True).frame
-    path = Path(dst_dir) / "diabetes.csv"
-    df.to_csv(path, index=False)
-    return str(path), "target"
+DEFAULT_DATASET_PATH = "/app/demo_data/diabetes.csv"
+DEFAULT_TARGET_COLUMN = "target"
 
 
 def load_csv(path: str, target_col: str) -> tuple[pd.DataFrame, pd.Series]:
@@ -154,6 +133,8 @@ def log_dataset_stage(
             f"{stage}_missing_pct": float(missing_pct),
         }
     )
+
+
 def resolve_version_for_run(
     client,
     model_name: str,

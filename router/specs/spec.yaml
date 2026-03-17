@@ -9,6 +9,10 @@ sklearn-model-1:
   env:
     MLFLOW_EXPERIMENT: diabetes_rf_demo
     REGISTERED_MODEL_NAME: DiabetesRF
+    DATASET_PATH: /app/demo_data/diabetes.csv
+    TARGET_COLUMN: target
+    DATASET_NAME: demo_diabetes
+    DATASET_VERSION: v1
     N_ESTIMATORS: 200
     MAX_DEPTH: 8
 
@@ -23,6 +27,10 @@ pytorch-model-1:
   env:
     MLFLOW_EXPERIMENT: diabetes_torch_demo
     REGISTERED_MODEL_NAME: DiabetesTorch
+    DATASET_PATH: /app/demo_data/diabetes.csv
+    TARGET_COLUMN: target
+    DATASET_NAME: demo_diabetes
+    DATASET_VERSION: v1
     HIDDEN_DIM: 32
     LEARNING_RATE: 0.001
     EPOCHS: 250

@@ -5,23 +5,16 @@ helpers.py - shared data preparation and MLflow lineage helpers for the PyTorch 
 from __future__ import annotations
 
 import time
-from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import mlflow
 import numpy as np
 import pandas as pd
-from sklearn.datasets import load_diabetes
 from sklearn.model_selection import train_test_split
 
 
-def prepare_demo_csv(dst_dir: str = "./demo/data") -> Tuple[str, str]:
-    """Create a Diabetes CSV demo dataset and return its path and target column."""
-    Path(dst_dir).mkdir(parents=True, exist_ok=True)
-    df = load_diabetes(as_frame=True).frame
-    path = Path(dst_dir) / "diabetes.csv"
-    df.to_csv(path, index=False)
-    return str(path), "target"
+DEFAULT_DATASET_PATH = "/app/demo_data/diabetes.csv"
+DEFAULT_TARGET_COLUMN = "target"
 
 
 def load_csv(path: str, target_col: str) -> tuple[pd.DataFrame, pd.Series]:

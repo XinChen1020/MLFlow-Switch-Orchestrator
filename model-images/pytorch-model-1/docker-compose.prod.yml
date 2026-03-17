@@ -5,8 +5,8 @@
 services:
   trainer-pytorch-model-1:
     build:
-      context: .
-      dockerfile: docker_build/Dockerfile_training
+      context: ../..
+      dockerfile: model-images/pytorch-model-1/docker_build/Dockerfile_training
     image: trainer-pytorch-model-1:${TAG:-latest}
 
   server-pytorch-model-1:

@@ -35,6 +35,23 @@ Key behaviors:
 
 The two backends are intentionally similar so the main difference is the training framework rather than the deployment flow.
 
+## Dataset Modes
+
+The bundled backends default to the checked-in `demo_data/diabetes.csv` dataset,
+which is copied into the trainer images at build time. This keeps the demo path
+deterministic while still allowing custom data.
+
+- Default demo mode: the trainer spec sets `DATASET_PATH=/app/demo_data/diabetes.csv` and `TARGET_COLUMN=target`.
+- Custom dataset mode: override `DATASET_PATH` and `TARGET_COLUMN` in the train request parameters or spec.
+- Dataset metadata: `DATASET_NAME` and `DATASET_VERSION` are logged to MLflow alongside the run.
+
+If you want to regenerate the checked-in demo CSV:
+
+```bash
+cd model-images/sklearn-model-1
+uv run python ../../demo_data/prepare_demo_data.py
+```
+
 ## End-to-End Flow
 
 1. A request hits `/admin/train/{trainer}` or `/admin/train_then_roll/{trainer}`.
