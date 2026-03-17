@@ -54,6 +54,26 @@ def load_csv(path: str, target_col: str) -> tuple[pd.DataFrame, pd.Series]:
     return X, y
 
 
+def sample_rows(
+    X: pd.DataFrame,
+    y: pd.Series,
+    *,
+    max_rows: int | None,
+    random_state: int,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """
+    Optionally down-sample rows for faster demo or smoke-test training.
+
+    When `max_rows` is unset or larger than the dataset, the full dataset is
+    returned unchanged.
+    """
+    if not max_rows or max_rows <= 0 or len(X) <= max_rows:
+        return X, y
+
+    sampled_indices = X.sample(n=max_rows, random_state=random_state).index
+    return X.loc[sampled_indices].reset_index(drop=True), y.loc[sampled_indices].reset_index(drop=True)
+
+
 def split_train_val_test(
     X: pd.DataFrame,
     y: pd.Series,

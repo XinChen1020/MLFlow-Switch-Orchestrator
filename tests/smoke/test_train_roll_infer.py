@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-Smoke test for the demo deployment flow.
+Smoke test for the default train-roll-infer happy path.
 
-This script exercises the happy path against a running local stack:
+This script intentionally covers only the primary demo flow:
 1. trigger train-and-roll through the router
 2. wait for /status to report a healthy active deployment
 3. call the stable inference endpoint
-
-It can be run directly as a script or collected by pytest.
 """
 
 from __future__ import annotations
@@ -15,302 +13,60 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
-from dataclasses import dataclass
-from typing import Any
-from urllib import error, request
+from pathlib import Path
 
 try:
     import pytest
 except ImportError:  # pragma: no cover - optional during direct script execution
     pytest = None
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
 
-DEFAULT_TIMEOUT_SECONDS = 30.0
-DEFAULT_TRAIN_REQUEST_TIMEOUT_SECONDS = 300.0
-DEFAULT_STATUS_ATTEMPTS = 30
-DEFAULT_STATUS_SLEEP_SECONDS = 2.0
-DEFAULT_WAIT_SECONDS = 600
-DEFAULT_TRAINER_NAME = "sklearn-model-1"
-DEFAULT_ROLLBACK_PARAM_DELTA = 64
-
-DEFAULT_INFERENCE_PAYLOAD = {
-    "dataframe_split": {
-        "columns": ["age", "sex", "bmi", "bp", "s1", "s2", "s3", "s4", "s5", "s6"],
-        "data": [[0.03, 1, 0.06, 0.03, 0.04, 0.03, 0.02, 0.03, 0.04, 0.01]],
-    }
-}
-
-
-@dataclass
-class SmokeConfig:
-    router_url: str
-    inference_url: str
-    trainer_name: str
-    wait_seconds: int
-    train_request_timeout_seconds: float
-    request_timeout_seconds: float
-    status_attempts: int
-    status_sleep_seconds: float
-    run_rollback_smoke: bool
-
-
-def _load_config() -> SmokeConfig:
-    """Load runtime configuration from the environment with local defaults."""
-    wait_seconds = int(os.getenv("WAIT_SECONDS", str(DEFAULT_WAIT_SECONDS)))
-    request_timeout_seconds = float(
-        os.getenv("REQUEST_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
-    )
-    train_request_timeout_seconds = float(
-        os.getenv(
-            "TRAIN_REQUEST_TIMEOUT_SECONDS",
-            str(max(DEFAULT_TRAIN_REQUEST_TIMEOUT_SECONDS, wait_seconds + 60)),
-        )
-    )
-    return SmokeConfig(
-        router_url=os.getenv("ROUTER_URL", "http://localhost:8000").rstrip("/"),
-        inference_url=os.getenv("INFERENCE_URL", "http://localhost:9000").rstrip("/"),
-        trainer_name=os.getenv("TRAINER_NAME", DEFAULT_TRAINER_NAME),
-        wait_seconds=wait_seconds,
-        train_request_timeout_seconds=train_request_timeout_seconds,
-        request_timeout_seconds=request_timeout_seconds,
-        status_attempts=int(os.getenv("STATUS_ATTEMPTS", str(DEFAULT_STATUS_ATTEMPTS))),
-        status_sleep_seconds=float(
-            os.getenv("STATUS_SLEEP_SECONDS", str(DEFAULT_STATUS_SLEEP_SECONDS))
-        ),
-        run_rollback_smoke=os.getenv("RUN_ROLLBACK_SMOKE") == "1",
-    )
-
-
-def _json_request(
-    method: str,
-    url: str,
-    *,
-    payload: dict[str, Any] | None = None,
-    timeout: float,
-) -> Any:
-    """Send a JSON request and return the parsed JSON response."""
-    body = None
-    headers = {}
-    if payload is not None:
-        body = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    req = request.Request(url, data=body, headers=headers, method=method)
-    try:
-        with request.urlopen(req, timeout=timeout) as response:
-            raw_body = response.read().decode("utf-8")
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"{method} {url} failed with HTTP {exc.code}: {detail}") from exc
-    except error.URLError as exc:
-        raise RuntimeError(f"{method} {url} failed: {exc.reason}") from exc
-
-    try:
-        return json.loads(raw_body)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"{method} {url} returned non-JSON output: {raw_body}") from exc
+from _smoke_common import (
+    DEFAULT_INFERENCE_PAYLOAD,
+    assert_inference_response,
+    assert_status_matches_train,
+    assert_train_response,
+    default_train_parameters,
+    json_request,
+    load_config,
+    status_summary,
+    train_summary,
+    trigger_train_then_roll,
+    wait_for_status,
+)
 
 
 def run_smoke_test() -> None:
     """Run the end-to-end happy path against a live local stack."""
-    config = _load_config()
+    config = load_config()
 
     print(f"Triggering train-and-roll for {config.trainer_name}...", flush=True)
-    train_response = _trigger_train_then_roll(
+    train_response = trigger_train_then_roll(
         config,
-        parameters=_default_train_parameters(config.trainer_name),
+        parameters=default_train_parameters(config.trainer_name),
     )
-    _assert_train_response(train_response)
-    print(json.dumps(_train_summary(train_response), indent=2), flush=True)
+    assert_train_response(train_response)
+    print(json.dumps(train_summary(train_response), indent=2), flush=True)
 
     print("Waiting for /status to report a healthy deployment...", flush=True)
-    status_response = _wait_for_status(config)
-    _assert_status_matches_train(status_response, train_response)
-    print(json.dumps(_status_summary(status_response), indent=2), flush=True)
+    status_response = wait_for_status(config)
+    assert_status_matches_train(status_response, train_response)
+    print(json.dumps(status_summary(status_response), indent=2), flush=True)
 
     print("Calling inference endpoint...", flush=True)
-    inference_response = _json_request(
+    inference_response = json_request(
         "POST",
         f"{config.inference_url}/invocations",
         payload=DEFAULT_INFERENCE_PAYLOAD,
         timeout=config.request_timeout_seconds,
     )
-    _assert_inference_response(inference_response)
+    assert_inference_response(inference_response)
     print(json.dumps(inference_response, indent=2), flush=True)
 
-    if config.run_rollback_smoke:
-        _run_rollback_smoke(config, train_response)
-
     print("Smoke test completed successfully.", flush=True)
-
-
-def _default_train_parameters(trainer_name: str) -> dict[str, Any]:
-    """Use a small trainer-specific override so each rollout produces a fresh version."""
-    if trainer_name == "pytorch-model-1":
-        return {"EPOCHS": 300, "HIDDEN_DIM": 64}
-    return {"N_ESTIMATORS": 256}
-
-
-def _rollback_parameters(trainer_name: str) -> dict[str, Any]:
-    """Use a second override to force a new model version before rollback."""
-    if trainer_name == "pytorch-model-1":
-        return {"EPOCHS": 320, "HIDDEN_DIM": 64}
-    return {"N_ESTIMATORS": 256 + DEFAULT_ROLLBACK_PARAM_DELTA}
-
-
-def _trigger_train_then_roll(
-    config: SmokeConfig,
-    *,
-    parameters: dict[str, Any],
-) -> dict[str, Any]:
-    """Trigger the synchronous train-and-roll route with caller-provided overrides."""
-    return _json_request(
-        "POST",
-        f"{config.router_url}/admin/train_then_roll/{config.trainer_name}",
-        payload={
-            "wait_seconds": config.wait_seconds,
-            "parameters": parameters,
-        },
-        # train_then_roll is synchronous, so it needs a much longer request
-        # timeout than quick status or inference checks.
-        timeout=config.train_request_timeout_seconds,
-    )
-
-
-def _run_rollback_smoke(config: SmokeConfig, initial_train_response: dict[str, Any]) -> None:
-    """
-    Run one extra smoke path for explicit rollback.
-
-    This remains opt-in because it requires a second full promotion before the
-    rollback target exists.
-    """
-    print("Running rollback smoke path...", flush=True)
-    second_train_response = _trigger_train_then_roll(
-        config,
-        parameters=_rollback_parameters(config.trainer_name),
-    )
-    _assert_train_response(second_train_response)
-    if second_train_response.get("version") == initial_train_response.get("version"):
-        raise AssertionError("second train_then_roll did not produce a new model version")
-    print(json.dumps(_train_summary(second_train_response), indent=2), flush=True)
-
-    print("Calling rollback endpoint...", flush=True)
-    rollback_response = _json_request(
-        "POST",
-        f"{config.router_url}/admin/rollback",
-        payload={"wait_ready_seconds": config.wait_seconds},
-        timeout=config.train_request_timeout_seconds,
-    )
-    print(json.dumps(rollback_response, indent=2), flush=True)
-
-    print("Waiting for /status to reflect the rollback...", flush=True)
-    rolled_back_status = _wait_for_status(
-        config,
-        expected_version=initial_train_response.get("version"),
-    )
-    _assert_rollback_matches_initial(rolled_back_status, initial_train_response)
-    print(json.dumps(_status_summary(rolled_back_status), indent=2), flush=True)
-
-
-def _assert_train_response(payload: dict[str, Any]) -> None:
-    """Validate the minimum fields needed for the rest of the smoke test."""
-    required = ["rolled", "run_id", "registered_model", "version", "public_url"]
-    missing = [key for key in required if payload.get(key) in (None, "")]
-    if missing:
-        raise AssertionError(f"train_then_roll response missing fields: {missing}")
-    if payload.get("rolled") is not True:
-        raise AssertionError(f"train_then_roll did not report a successful rollout: {payload}")
-
-
-def _wait_for_status(
-    config: SmokeConfig,
-    *,
-    expected_version: int | None = None,
-) -> dict[str, Any]:
-    """Poll /status until the active deployment is healthy and versioned."""
-    last_status: dict[str, Any] | None = None
-    for _ in range(config.status_attempts):
-        status_response = _json_request(
-            "GET",
-            f"{config.router_url}/status",
-            timeout=config.request_timeout_seconds,
-        )
-        last_status = status_response
-        # The rollout is considered ready only once health checks pass and the
-        # active model version is visible in the persisted deployment state.
-        version = status_response.get("model_version")
-        if (
-            status_response.get("healthy") is True
-            and version
-            and (expected_version is None or version == expected_version)
-        ):
-            return status_response
-        time.sleep(config.status_sleep_seconds)
-
-    raise AssertionError(
-        "Timed out waiting for /status to report a healthy deployment: "
-        f"{json.dumps(last_status, indent=2)}"
-    )
-
-
-def _assert_status_matches_train(
-    status_response: dict[str, Any], train_response: dict[str, Any]
-) -> None:
-    """Confirm /status reflects the version produced by train_then_roll."""
-    if status_response.get("model_version") != train_response.get("version"):
-        raise AssertionError(
-            "status model_version does not match the version returned by train_then_roll"
-        )
-    if status_response.get("healthy") is not True:
-        raise AssertionError(f"deployment is not healthy: {status_response}")
-
-
-def _assert_rollback_matches_initial(
-    status_response: dict[str, Any],
-    initial_train_response: dict[str, Any],
-) -> None:
-    """Confirm /status returns to the version that was active before rollback."""
-    if status_response.get("model_version") != initial_train_response.get("version"):
-        raise AssertionError("rollback did not restore the initial model version")
-    if status_response.get("healthy") is not True:
-        raise AssertionError(f"rolled back deployment is not healthy: {status_response}")
-
-
-def _assert_inference_response(payload: Any) -> None:
-    """Accept either the list or dict formats returned by MLflow serving."""
-    if isinstance(payload, dict):
-        if not payload:
-            raise AssertionError("inference response was empty")
-        return
-    if isinstance(payload, list):
-        if not payload:
-            raise AssertionError("inference response list was empty")
-        return
-    raise AssertionError(f"unexpected inference response type: {type(payload).__name__}")
-
-
-def _train_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    """Trim the train response to the fields most useful in demo output."""
-    return {
-        "rolled": payload["rolled"],
-        "run_id": payload["run_id"],
-        "registered_model": payload["registered_model"],
-        "version": payload["version"],
-        "public_url": payload["public_url"],
-    }
-
-
-def _status_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    """Trim the status response to the active deployment summary."""
-    return {
-        "active": payload.get("active"),
-        "healthy": payload.get("healthy"),
-        "model_name": payload.get("model_name"),
-        "model_version": payload.get("model_version"),
-        "model_alias": payload.get("model_alias"),
-        "public_url": payload.get("public_url"),
-    }
 
 
 def test_train_roll_infer_smoke() -> None:

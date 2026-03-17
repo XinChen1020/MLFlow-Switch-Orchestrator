@@ -123,6 +123,10 @@ The reference trainer in `model-images/sklearn-model-1/` demonstrates the main M
    ```bash
    ./scripts/smoke.sh
    ```
+   To run the explicit rollback smoke scenario:
+   ```bash
+   ./scripts/smoke-rollback.sh
+   ```
 9. Run fast unit tests from the router project:
    ```bash
    cd router

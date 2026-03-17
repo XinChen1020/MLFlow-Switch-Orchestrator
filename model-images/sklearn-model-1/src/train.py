@@ -16,6 +16,7 @@ Environment:
   TARGET_COLUMN              Target column name (default: "target")
   DATASET_NAME               Dataset display name logged to MLflow (default: "demo_diabetes")
   DATASET_VERSION            Dataset version metadata logged to MLflow (default: "v1")
+  DATASET_SAMPLE_ROWS        Optional row cap for faster demo or smoke-test runs
   TEST_SIZE                  Test fraction (default "0.2")
   VAL_SIZE                   Validation fraction of non-test portion (default "0.2")
   RANDOM_STATE               Random seed (default "42")
@@ -41,6 +42,7 @@ from helpers import (
     load_csv,
     log_dataset_stage,
     resolve_version_for_run,
+    sample_rows,
     split_train_val_test,
 )
 
@@ -76,6 +78,9 @@ def main() -> None:
     test_size = float(os.getenv("TEST_SIZE", "0.2"))
     val_size = float(os.getenv("VAL_SIZE", "0.2"))
     random_state = int(os.getenv("RANDOM_STATE", "42"))
+    dataset_sample_rows = int(os.getenv("DATASET_SAMPLE_ROWS", "0"))
+    original_row_count = len(X)
+    X, y = sample_rows(X, y, max_rows=dataset_sample_rows, random_state=random_state)
     X_tr, y_tr, X_va, y_va, X_te, y_te = split_train_val_test(
         X, y, test_size=test_size, val_size=val_size, random_state=random_state
     )
@@ -111,6 +116,9 @@ def main() -> None:
                 "dataset_path": dataset_path,
                 "dataset_name": dataset_name,
                 "dataset_version": dataset_version,
+                "dataset_row_count": original_row_count,
+                "sampled_dataset_row_count": len(X),
+                "dataset_sample_rows": dataset_sample_rows,
                 "target_column": target_col,
             }
         )
